@@ -1,8 +1,16 @@
 import core.settings as CoreSettings
 import user.usersettings as UserSettings
 
+import os
+
+# The GROMACS binary. Ubuntu's gromacs package installs "gmx"; a source build with MPI usually
+# installs "gmx_mpi", and a module-loaded cluster build can be either. Resolved from the
+# environment so neither case needs a source edit.
+GMX_BINARY = os.environ.get("GMX", "gmx")
+
+
 def gmx(bQuiet, bNocopyright, bNobackup):
-    command = "gmx"
+    command = GMX_BINARY
     if bQuiet:
         command += " -quiet"
     if bNocopyright:

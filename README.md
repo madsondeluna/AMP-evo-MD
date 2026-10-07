@@ -8,6 +8,8 @@ Adapted from the Evo-MD code of van Hilten, Methorst, Verwei and Risselada
 sensing peptides. The genetic algorithm, the GROMACS wrappers and the simulation scaffolding
 are theirs. What changed is the axis of comparison and the objective.
 
+![Pipeline overview](docs/pipeline.svg)
+
 ## What problem this addresses
 
 The original compares one membrane composition held at two areas, and measures how much the
@@ -127,6 +129,358 @@ The calibration run comes first, and it uses no genetic algorithm.
    go/no-go: an optimiser cannot recover a signal that is not in the observable.
 4. **Only then run a campaign.** `run.py` with `STATE = 0`.
 
+## Installation on an Ubuntu workstation
+
+Tested against Ubuntu 22.04 and 24.04. Every command below is run as a normal user; only the
+`apt` lines need `sudo`.
+
+### 1. System packages
+
+```bash
+sudo apt update
+sudo apt install -y build-essential git python3 python3-pip python3-venv \
+                    gromacs libopenmpi-dev openmpi-bin
+```
+
+Ubuntu's `gromacs` package installs the binary as `gmx` and is fine for this pipeline. If the
+lab has its own GROMACS build, use that instead and skip the `gromacs` package: a source build
+is typically 2 to 3 times faster because it is compiled for the machine's own instruction set,
+which matters a great deal across thousands of evaluations. A source build with MPI usually
+installs the binary as `gmx_mpi` rather than `gmx`; see the `GMX` variable below.
+
+Check what you have:
+
+```bash
+gmx --version | head -20        # or: gmx_mpi --version
+```
+
+The line to read is `GROMACS version`. Anything from 2021 onward works. Note the `GPU support`
+line as well: with CUDA support the per-candidate cost drops substantially.
+
+### 2. Python environment
+
+A virtual environment, not the system Python. The pipeline pins nothing, but `vermouth` and
+`PeptideBuilder` pull in versions that are better kept out of the system site-packages.
+
+```bash
+git clone https://github.com/madsondeluna/AMP-evo-MD.git
+cd AMP-evo-MD
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+pip install --upgrade pip
+pip install numpy matplotlib mpi4py vermouth PeptideBuilder
+```
+
+`vermouth` provides the `martinize2` command that converts an atomistic peptide into its
+coarse-grained topology. Confirm all three are reachable:
+
+```bash
+python -c "import numpy, matplotlib, mpi4py, PeptideBuilder; print('python deps ok')"
+martinize2 --version
+```
+
+### 3. insane, for building membranes
+
+`insane.py` builds the initial lipid bilayer. It is not on PyPI; fetch it from the Martini
+distribution and put it on `PATH`:
+
+```bash
+mkdir -p ~/bin
+curl -L https://raw.githubusercontent.com/Tsjerk/Insane/master/insane.py -o ~/bin/insane
+chmod +x ~/bin/insane
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+insane --help | head -5
+```
+
+### 4. Verify the installation
+
+The test suite runs without GROMACS, because the scoring layer is a pure function of the
+observables file. It should take under a second:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Then exercise the reporting tools against synthetic data, which checks matplotlib and the
+parsers without spending any simulation time:
+
+```bash
+python tests/make_fake_progress.py --out /tmp/fake_progress.txt
+python tools/ga_report.py /tmp/fake_progress.txt --outdir /tmp/ga_report
+```
+
+That writes `performance.png`, `composition.png`, `positional.png`, `progress.csv` and
+`summary.json` to `/tmp/ga_report`. If those appear, everything except GROMACS itself is
+working.
+
+### 5. Environment variables
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GMX` | GROMACS binary name | `gmx` |
+| `MARTINIZE2` | martinize2 binary | `martinize2` |
+| `OMP_NUM_THREADS` | threads per GROMACS process | set it explicitly, see below |
+
+For a source build whose binary is `gmx_mpi`:
+
+```bash
+export GMX=gmx_mpi
+```
+
+Put the exports in a small `env.sh` next to the clone and source it before every run, rather
+than relying on `.bashrc`. A campaign that silently picks up a different GROMACS build halfway
+through is not reproducible, and the difference will not be visible in the output.
+
+## Running it
+
+### Step 1: prepare and calibrate the membranes
+
+Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMembrane` on any
+entry point while the reference values are missing, which is deliberate: a plausible placeholder
+would propagate into every fitness value in the campaign while looking entirely reasonable.
+
+```bash
+source .venv/bin/activate
+export GMX=gmx                      # or gmx_mpi
+
+# First pass. Prints the plan and the insane command, then stops.
+./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+```
+
+Read the plan it prints. It reports the lipid counts, the water count, the box dimensions, and
+whether a 30-residue helix fits with enough clearance from its own periodic image. Stopping here
+on the first pass is intentional: lipid naming and the `insane` flags differ between Martini
+lipid sets, and a wrong `-l` / `-u` split produces an asymmetric bilayer that looks fine until
+the surface tension refuses to reach zero.
+
+Once the plan looks right:
+
+```bash
+AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+```
+
+This builds, minimises, and equilibrates at zero tension under a semi-isotropic barostat, then
+measures the equilibrium area per lipid and prints a second plan with corrected lipid counts.
+Rebuild with those counts, re-equilibrate, and then run the production reference:
+
+```bash
+PASS=2 AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+```
+
+Repeat the whole sequence for the host membrane:
+
+```bash
+./tools/protocol.sh host "POPC:60,DPSM:10,CHOL:30" host
+```
+
+Why two passes. The production runs use a constant-area ensemble, so the box must sit at the
+composition's own equilibrium area. The equilibrium area per lipid is only known after
+equilibrating, so the lipid count is corrected on a second pass while the box stays fixed at
+8.0 x 8.0 nm. The lipid count is the free parameter, not the box, because the two membranes also
+need comparable areas: `delta_gamma` is a per-unit-area quantity, and a large area mismatch
+would dilute the per-peptide perturbation differently in each membrane.
+
+Cholesterol is the composition where the first pass will be furthest off. Sterols condense their
+neighbours, so a linear sum over the seed area-per-lipid values underestimates the real packing.
+Expect to need the second pass more than for the bacterial membrane.
+
+Useful overrides:
+
+```bash
+BOX=8.0 MAX_RESIDUES=30 SALT=0.15 EQUIL_NS=200 PROD_NS=400 \
+    AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+```
+
+Check the result before trusting it:
+
+```bash
+python tools/membrane_analysis.py single --name bacterial --dir prep/bacterial
+python tools/membrane_analysis.py compare --dir prep --names bacterial host
+```
+
+Three things must hold, and all three fail quietly if ignored. The surface tension must be zero
+within error: the Evo-MD POPC reference sits at 1.93 +/- 0.99 bar, and a value far from zero
+means the box area and the equilibrium area disagree, so every peptide would be scored against a
+pre-stressed bilayer. The area must have stopped drifting. The leaflets must be symmetric,
+because an area mismatch between them shows up as spontaneous curvature and contaminates the
+surface tension. The script states each verdict in words rather than leaving it to be read off
+a number.
+
+Finally, paste the emitted `MembraneDef` blocks into `MEMBRANES` in `user/membranes.py`, and
+copy the equilibrated structures into place:
+
+```bash
+cp prep/bacterial/bacterial_eq.gro user/base/insert_peptide/membrane_bacterial.gro
+cp prep/bacterial/bacterial.top    user/base/insert_peptide/membrane_bacterial.top
+cp prep/host/host_eq.gro           user/base/insert_peptide/membrane_host.gro
+cp prep/host/host.top              user/base/insert_peptide/membrane_host.top
+
+python -c "import user.membranes as m; m.require_all_calibrated(); print('membranes calibrated')"
+```
+
+### Step 2: measure the calibration set
+
+Put one sequence per line in `seq.txt`, set `STATE = 1` in `run.py`, and set
+`WRITE_XTC = True` in `user/usersettings.py`. The trajectory is needed here because the
+insertion-depth analysis reads it; the GA campaign later turns it back off, since storing
+trajectories for thousands of candidates fills a disk quickly.
+
+```bash
+mpirun -np 8 python run.py --output_dir calibration_run
+```
+
+Choose `-np` to match the physical cores, not threads: each MPI rank runs its own GROMACS
+process, and oversubscribing slows everything down. On a 32-core workstation, `-np 8` with
+`OMP_NUM_THREADS=4` is a reasonable starting point. Check with `nproc` and `lscpu`.
+
+```bash
+export OMP_NUM_THREADS=4
+mpirun -np 8 python run.py --output_dir calibration_run
+```
+
+### Step 3: the go/no-go check
+
+```bash
+python calibrate.py calibration_run --objective damage --labels labels.csv
+python calibrate.py calibration_run --objective binding --labels labels.csv
+```
+
+`labels.csv` has a header and two columns, `sequence,class`, where class is one of `inactive`,
+`selective` or `lytic`:
+
+```csv
+sequence,class
+GIGKFLHSAKKFGKAFVGEIMNS,selective
+GIGAVLKVLTTGLPALISWIKRKRQQ,lytic
+```
+
+The script reports a pairwise concordance against those labels and states the reading. This is
+the decision point for the whole approach: if the observable does not order peptides whose
+behaviour is already known, no optimiser setting downstream recovers a signal that is not there.
+
+### Step 4: run a campaign
+
+Set `STATE = 0` in `run.py`, `WRITE_XTC = False` in `user/usersettings.py`, and pick the
+objective:
+
+```python
+# user/usersettings.py
+OBJECTIVE = "damage"      # or "binding"
+```
+
+```bash
+export OMP_NUM_THREADS=4
+nohup mpirun -np 8 python run.py --output_dir campaign_damage > campaign.log 2>&1 &
+```
+
+`nohup` and the trailing `&` matter: a campaign runs for days, and an interrupted SSH session
+should not kill it. Better still, run it inside `tmux` or `screen` so you can reattach:
+
+```bash
+tmux new -s campaign
+# inside tmux:
+mpirun -np 8 python run.py --output_dir campaign_damage
+# detach with Ctrl-b then d; reattach later with: tmux attach -t campaign
+```
+
+Resuming after a crash or a reboot:
+
+```bash
+mpirun -np 8 python run.py --output_dir campaign_damage \
+    --restart campaign_damage/checkpoint.dat
+```
+
+### Step 5: watch it while it runs
+
+The report tool reads the progress file the GA appends to as it goes, so it can be pointed at a
+campaign in flight:
+
+```bash
+python tools/ga_report.py campaign_damage/output.txt --outdir report_damage
+```
+
+It writes `progress.csv`, `summary.json` and three figures, and prints a summary table with a
+plain-language reading of the state of the search.
+
+Read fitness and diversity together, never fitness alone. Rising fitness on its own does not
+distinguish a search that found a motif from one that collapsed onto a few near-identical
+survivors and stopped exploring: the two look identical on a fitness plot. Positional entropy
+separates them. A real motif shows entropy falling at the positions that matter while others
+stay high; premature convergence pulls every position down together. The script says which it
+sees.
+
+Re-score a finished campaign under the other objective without running anything:
+
+```bash
+python calibrate.py campaign_damage --objective binding
+```
+
+This works because `compute_observables` writes every observable from each pair of production
+runs, and the two objectives are pure functions of that file. Comparing the two rankings on one
+dataset is a post-processing step, not a second campaign.
+
+### Resource planning
+
+Per candidate, two production runs of 400 ns each on a roughly 8 x 8 x 9 nm coarse-grained
+system. The exact wall time depends heavily on the build and whether a GPU is available, so
+measure it rather than taking an estimate: run a single sequence through `STATE = 1` and time
+it.
+
+```bash
+printf 'GIGKFLHSAKKFGKAFVGEIMNS\n' > seq.txt
+time mpirun -np 1 python run.py --output_dir timing_test
+```
+
+Multiply that by the population size and the iteration count. A default campaign is 144
+candidates over 100 iterations, which is roughly 14 400 evaluations before deduplication; the GA
+reuses the stored fitness of sequences it has already simulated, so the real count is lower, but
+the order of magnitude is what matters when deciding whether the workstation is the right place
+to run this at all.
+
+Disk: with `WRITE_XTC = False` each candidate leaves a few megabytes. With it on, budget
+hundreds of megabytes per candidate, which is why it is only enabled for the calibration set.
+
+## Troubleshooting
+
+**`UncalibratedMembrane` on startup.** Expected until step 1 is complete. The exception names
+which reference values are missing.
+
+**`martinize2: command not found`.** The virtual environment is not active, or `vermouth` is not
+installed in it. Run `source .venv/bin/activate` and `pip install vermouth`. If martinize2 lives
+somewhere else, set `export MARTINIZE2=/full/path/to/martinize2`.
+
+**`gmx: command not found`.** Either GROMACS is not installed, or the binary is named something
+else. Run `which gmx gmx_mpi` and set `export GMX=` to whichever exists. On a cluster, the
+module may need loading first: `module load gromacs`.
+
+**`ModuleNotFoundError: No module named 'mpi4py'`.** `mpi4py` compiles against the system MPI,
+so `libopenmpi-dev` must be installed before `pip install mpi4py`. If it was installed after,
+reinstall with `pip install --no-cache-dir --force-reinstall mpi4py`. The package also runs
+single-process without `mpi4py`, which is enough for testing but not for a campaign.
+
+**Surface tension will not reach zero.** The box area and the composition's equilibrium area
+disagree. Re-run the second planning pass with the measured area per lipid and rebuild with the
+corrected lipid count. Do not proceed: every peptide would be scored against a pre-stressed
+bilayer.
+
+**Leaflets reported as asymmetric.** The `insane` `-l` and `-u` flags set the lower and upper
+leaflets separately, and a wrong split is the usual cause. Rebuild with matching counts, unless
+the asymmetry is intentional for an outer-membrane model.
+
+**`gmx energy` finds no interaction-energy terms.** `energygrps` must be set in
+`user/base/production/npt.mdp`. It is enabled in this fork, so a missing term means the mdp was
+edited or an older `.edr` is being read. The damage objective does not need those terms, but the
+binding objective does, which means a run configured for damage with `energygrps` disabled
+cannot be re-scored for binding after the fact.
+
+**The campaign stops improving early.** Look at the diversity panels before changing the
+objective. If positional entropy is near zero across all positions, the population has collapsed
+and the fix is a higher mutation rate or a larger parent pool. If entropy is still high, the
+observable may simply not discriminate, which is what the calibration set exists to establish.
+
 ## Limitations to state rather than discover
 
 **Imposed helix.** Martini cannot fold, so secondary structure is assigned, not predicted
@@ -135,11 +489,14 @@ which are helical by construction, and is a strong one for AMPs, many of which a
 in solution and fold only on binding. It is the first thing to revisit if the calibration set
 is misranked.
 
-**Peptide density.** One peptide in a 128-lipid patch is roughly P:L 1:128. AMPs act
+**Peptide density.** One peptide in a roughly 200-lipid patch is about P:L 1:200. AMPs act
 cooperatively at ratios an order of magnitude higher. `delta_gamma` here is dilute-limit,
-per-peptide tension generation; extrapolating it to lysis is an assumption. Vestigial
-two-peptide support exists upstream (`ENERGY_select_groups_Protein1` and `Protein2`) if
-cooperativity becomes central, at double the cost and with a different interpretation of gamma.
+per-peptide tension generation; extrapolating it to lysis is an assumption. Reference 2 measured
+this dependence directly in their geometry and found the effect saturating at four peptides per
+pore rim, which is a reason to take the single-peptide limit as a lower bound rather than a
+proxy for the cooperative regime. Vestigial two-peptide support exists upstream
+(`ENERGY_select_groups_Protein1` and `Protein2`) if cooperativity becomes central, at double the
+cost and with a different interpretation of gamma.
 
 **Threshold.** Generating leaflet strain is necessary for rupture, not sufficient, and nothing
 in either objective knows where the rupture threshold lies. Establishing it requires long
@@ -214,11 +571,19 @@ across the two without accounting for that.
 
 ## Requirements
 
-- Python 3
-- GROMACS, built with the Martini 3 force field files included under `user/base/`
-- `numpy`
-- `PeptideBuilder` and `vermouth`/`martinize2`, for structure generation and coarse-graining
-- `mpi4py`, optional; without it the package imports and scores but runs single-process
+| Component | Needed for | Notes |
+|---|---|---|
+| Python 3.8 or newer | everything | |
+| GROMACS 2021 or newer | all simulation | Ubuntu's `gromacs` package works; a source build is 2 to 3 times faster |
+| `numpy` | observables, analysis | |
+| `matplotlib` | figures | analysis only, not needed to run a campaign |
+| `vermouth` (`martinize2`) | coarse-graining peptides | |
+| `PeptideBuilder` | atomistic helix construction | |
+| `insane` | building membranes | not on PyPI, fetched separately |
+| `mpi4py` | parallel evaluation | optional; without it everything imports and scores, but runs single-process |
+
+The Martini 3 force field files are included under `user/base/`, so no separate download is
+needed for those.
 
 ## Layout
 
@@ -236,11 +601,31 @@ user/
     fitness_binding.py       objective A
     compute_fitness.py       dispatch
   base/                      mdp files and Martini 3 force field
+tools/
+  protocol.sh                membrane preparation, end to end
+  membrane.py                plan lipid counts, calibrate the reference constants
+  membrane_analysis.py       equilibration verdict and cross-membrane comparison
+  ga_report.py               campaign performance, diversity and composition
+  mdtools.py                 shared parsing, statistics and plot style
+docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
 calibrate.py                 score existing results, check against known classes
 tests/                       regression tests, no GROMACS required
 calibration/reference_popc/  the original POPC membranes and reference energies, as provenance
 ```
+
+### Which script to reach for
+
+| Task | Command |
+|---|---|
+| Prepare a membrane | `./tools/protocol.sh <name> "<composition>" <role>` |
+| Check a membrane is usable | `python tools/membrane_analysis.py single --name X --dir prep/X` |
+| Compare membranes | `python tools/membrane_analysis.py compare --dir prep --names bacterial host` |
+| Measure known peptides | `run.py` with `STATE = 1` |
+| The go or no-go check | `python calibrate.py <dir> --labels labels.csv` |
+| Run a campaign | `run.py` with `STATE = 0` |
+| Watch a campaign | `python tools/ga_report.py <dir>/output.txt --outdir report` |
+| Re-score under the other objective | `python calibrate.py <dir> --objective binding` |
 
 ## References
 

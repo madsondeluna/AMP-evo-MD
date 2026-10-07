@@ -199,10 +199,24 @@ plotting                            = False
 # R is enabled here, unlike the original. Excluding arginine is defensible for curvature
 # sensors and indefensible for AMPs: it carries much of the cationic character of natural
 # antimicrobial peptides and interacts with anionic headgroups differently from lysine.
+#
 # G and P remain excluded because the pipeline imposes a fixed helix; turning them on means
 # the Martini secondary structure assignment is modelling a helix the sequence would not
 # adopt. That premise is the main structural limitation of the whole approach and should be
 # argued explicitly rather than relaxed here by accident.
+#
+# I stays excluded, but for a different reason than helix propensity. In the martini3001
+# residue definitions shipped with vermouth, LEU and ILE carry identical bead types for both
+# backbone (P2) and side chain (SC2), exactly as they do in martini22 (P5 / AC1). Bead type
+# is what sets every nonbonded interaction, so the two residues are indistinguishable in
+# hydrophobicity, lipid contact and partitioning: everything this pipeline measures. They
+# differ only in side-chain geometry (LEU: bond, 0.363 nm, fc 7500; ILE: constraint,
+# 0.341 nm), which is far below the noise of the surface-tension average. Searching over both
+# spends evaluations separating two sequences the force field treats as one. Note that VAL is
+# genuinely distinct in Martini 3 (SP2 / SC3), so this argument does not extend to it.
+#
+# This exclusion is enforced here and nowhere else: GeneticAlgorithm.genes still holds all 20
+# residues, so setting propensities_mutation = False silently reintroduces I.
 propensities_initial                = True # False = uniform over GeneticAlgorithm.genes (all 20)
 propensities_mutation               = True # False = uniform over GeneticAlgorithm.genes (all 20)
 propensities                        = {"A": 0.1,

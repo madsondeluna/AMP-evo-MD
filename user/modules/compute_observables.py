@@ -1,0 +1,271 @@
+"""
+Extract every observable from the production trajectories and write them to observables.json.
+
+This module computes no fitness. It separates measurement from scalarisation, for one
+practical reason: the binding objective and the damage objective read the same .edr produced
+by the same run, so there is no reason for either of them to own the extraction, and good
+reason for neither to. Running both objectives over a finished campaign then becomes a
+post-processing step on the JSON files rather than a second set of simulations.
+
+Per membrane the following are recorded:
+
+  surften        surface tension of the system with peptide, kJ mol-1 nm-2
+  delta_gamma    gamma(free) - gamma(with peptide), kJ mol-1 nm-2
+                 Positive means the peptide relieves tension in the leaflet it occupies.
+                 At constant area that is the same statement as the peptide generating
+                 leaflet strain, which is the mechanical step upstream of pore formation.
+  delta_gamma_work
+                 delta_gamma * area, kJ mol-1. The work-equivalent, for comparison with the
+                 free energies in the literature; delta_gamma itself is intensive and is what
+                 the objectives use.
+  e_lipids       Coul-SR + LJ-SR between peptide and lipids, kJ mol-1
+  e_solvent      Coul-SR + LJ-SR between peptide and solvent, kJ mol-1
+  d_mem          centre-of-mass distance between peptide and membrane along z, nm
+  orientation    cosine factor from d_mem (Eq. 3 of van Hilten et al. 2023), in [0, 1]
+
+Every quantity carries its standard error where one is available, because the averaging
+window is short (see UserSettings.ENERGY_init_fraction) and a value without its error is not
+interpretable here.
+
+Sign conventions, which differ from the published figures: delta_gamma is positive for a
+peptide that relieves tension, matching the internal convention of the original code, where
+the fitness is maximised. The paper plots the corresponding quantity as negative and inverts
+the y axis of Fig. 2B to reconcile the two. Do not compare these numbers to the published
+ones without accounting for that.
+"""
+
+import json
+import os
+
+import numpy as np
+
+import core.settings as CoreSettings
+import core.system as System
+import core.gromacs as Gromacs
+import core.gromacs_commands
+
+import user.usersettings as UserSettings
+import user.membranes as Membranes
+
+
+OBSERVABLES_FILENAME = "observables.json"
+
+
+def orientation_factor(d_mem, b):
+    """
+    Cosine window on insertion depth, Eq. 3 of van Hilten et al. 2023.
+
+    Returns 1 when the peptide sits at the membrane surface (d_mem == b) and falls to 0 for a
+    peptide that has dissolved into solution (d_mem >= 2b) or crossed into a transmembrane or
+    inter-leaflet configuration (d_mem <= 0). Its purpose is to stop the optimiser from
+    scoring configurations that are not what the objective means to measure.
+    """
+    if b is None or b <= 0:
+        raise ValueError("orientation_factor needs a positive b (got %r)" % b)
+    if d_mem < UserSettings.a or d_mem > 2 * (b - UserSettings.a):
+        return 0.0
+    return -0.5 * (np.cos((d_mem - UserSettings.a) * np.pi / (b - UserSettings.a)) - 1)
+
+
+def module_compute_observables(simulation):
+
+    results = {}
+
+    for membrane_type in UserSettings.membrane_types:
+        membrane = Membranes.get(membrane_type)
+        membrane.require_calibrated()
+
+        class LocalFiles():
+            prod_XTC = simulation._share.get_filename("prod-%s-XTC" % membrane_type)
+            prod_TPR = simulation._share.get_filename("prod-%s-TPR" % membrane_type)
+            prod_EDR = simulation._share.get_filename("prod-%s-EDR" % membrane_type)
+            # Per-membrane index file. Sharing one across compositions would silently read the
+            # wrong atom indices; see the note in production.py.
+            NDX      = simulation._share.get_filename("prod-%s-NDX" % membrane_type)
+
+            surften_XVG  = UserSettings.name_output_production + "_" + membrane_type + "_surften.xvg"
+            distance_XVG = UserSettings.name_output_production + "_" + membrane_type + "_distance.xvg"
+            energy_XVG   = UserSettings.name_output_production + "_" + membrane_type + "_energy.xvg"
+
+            SURFTEN_OUT = UserSettings.name_output_production + "_" + membrane_type + ".SURFTEN"
+            ENERGY_OUT  = UserSettings.name_output_production + "_" + membrane_type + ".ENERGY"
+            DIST_OUT    = UserSettings.name_output_production + "_" + membrane_type + ".DIST"
+
+            stdout_stderr = None
+            if CoreSettings.write_stdout_stderr_to_file:
+                stdout_stderr = os.path.join(simulation._output_dir, CoreSettings.filename_output_stdout_stderr)
+
+        def path(filename):
+            if filename is None:
+                return None
+            return os.path.join(simulation._temp_dir, filename)
+
+        def gmx_energy(selection, path_xvg, path_out):
+            """Run gmx energy with an interactive selection and return the parsed mean/err."""
+            System.run_command(
+                core.gromacs_commands.GROMACSRunCommands.ENERGY(
+                    path(LocalFiles.prod_EDR),
+                    path(path_xvg),
+                    UserSettings.ENERGY_init_time,
+                ),
+                input=selection.encode(),
+                path_stdout=path(path_out),
+                path_stderr=path(path_out),
+            )
+            return Gromacs.GMX_average_ENERGY_output(path(path_out))
+
+        def read_surften():
+            mean, err = gmx_energy("#Surf*SurfTen\n",
+                                   LocalFiles.surften_XVG, LocalFiles.SURFTEN_OUT)
+            f = UserSettings.conversion_factor
+            return mean * f, err * f
+
+        def read_interaction_energies():
+            """
+            Short-range interaction energies between peptide and the lipid and solvent groups.
+
+            Requires energygrps in npt.mdp (enabled in this fork). If the terms are absent the
+            .edr simply does not contain them and gmx energy returns nothing usable, so a
+            failure here is reported rather than silently defaulted: a zero interaction energy
+            is indistinguishable from a peptide that never touched the membrane.
+            """
+            selection = "".join(term + "\n" for term in UserSettings.ENERGY_group_terms)
+            try:
+                _ = gmx_energy(selection, LocalFiles.energy_XVG, LocalFiles.ENERGY_OUT)
+            except Exception as exc:
+                return None, ("gmx energy failed for the interaction terms (%s). "
+                              "Check that energygrps is set in npt.mdp." % exc)
+
+            terms = _parse_energy_terms(path(LocalFiles.ENERGY_OUT),
+                                        UserSettings.ENERGY_group_terms)
+            if terms is None:
+                return None, "could not parse interaction terms from the gmx energy output"
+            return terms, None
+
+        def read_distance():
+            System.run_command(
+                core.gromacs_commands.GROMACSRunCommands.DISTANCE(
+                    path(LocalFiles.prod_XTC),
+                    path(LocalFiles.prod_TPR),
+                    path(LocalFiles.NDX),
+                    path(LocalFiles.distance_XVG),
+                    UserSettings.ENERGY_init_time
+                ),
+                input="com of group Protein plus com of group Lipids\n".encode(),
+                path_stdout=path(LocalFiles.DIST_OUT),
+                path_stderr=path(LocalFiles.DIST_OUT)
+            )
+            z_values = []
+            for line in open(path(LocalFiles.distance_XVG), "r"):
+                if "@" in line or "#" in line:
+                    continue
+                parts = line.split()
+                if parts:
+                    z_values.append(float(parts[-1]))
+            if not z_values:
+                raise RuntimeError("no distance frames parsed for membrane %r; the trajectory "
+                                   "may be missing (WRITE_XTC off?)" % membrane_type)
+            z = np.asarray(z_values)
+            # Standard error of the mean, uncorrected for autocorrelation. It understates the
+            # true uncertainty of a correlated MD time series and is reported as a floor, not
+            # as a converged estimate.
+            err = float(z.std(ddof=1) / np.sqrt(len(z))) if len(z) > 1 else 0.0
+            return float(z.mean()), err
+
+        # --- measurements ------------------------------------------------------------------
+        surften, surften_err = read_surften()
+        gamma_free, gamma_free_err = membrane.surften_free_converted()
+
+        delta_gamma = gamma_free - surften
+        delta_gamma_err = float(np.sqrt(gamma_free_err ** 2 + surften_err ** 2))
+
+        d_mem, d_mem_err = read_distance()
+        factor = orientation_factor(d_mem, membrane.b_nm)
+
+        energies, energy_warning = read_interaction_energies()
+
+        entry = {
+            "role": membrane.role,
+            "area_nm2": membrane.area_nm2,
+            "b_nm": membrane.b_nm,
+            "surften": {"mean": surften, "err": surften_err, "units": "kJ mol-1 nm-2"},
+            "surften_free": {"mean": gamma_free, "err": gamma_free_err, "units": "kJ mol-1 nm-2"},
+            "delta_gamma": {"mean": delta_gamma, "err": delta_gamma_err, "units": "kJ mol-1 nm-2"},
+            "delta_gamma_work": {"mean": delta_gamma * membrane.area_nm2,
+                                 "err": delta_gamma_err * membrane.area_nm2,
+                                 "units": "kJ mol-1"},
+            "d_mem": {"mean": d_mem, "err": d_mem_err, "units": "nm"},
+            "orientation": factor,
+        }
+
+        if energies is not None:
+            e_lip = _sum_terms(energies, ["Coul-SR:Protein-Lipids", "LJ-SR:Protein-Lipids"])
+            e_sol = _sum_terms(energies, ["Coul-SR:Protein-Solvent", "LJ-SR:Protein-Solvent"])
+            entry["e_lipids"] = {"mean": e_lip[0], "err": e_lip[1], "units": "kJ mol-1"}
+            entry["e_solvent"] = {"mean": e_sol[0], "err": e_sol[1], "units": "kJ mol-1"}
+            entry["energy_terms"] = {k: {"mean": v[0], "err": v[1]} for k, v in energies.items()}
+        else:
+            entry["e_lipids"] = None
+            entry["e_solvent"] = None
+            entry["energy_warning"] = energy_warning
+
+        results[membrane_type] = entry
+
+        simulation._share.add_file("surften-%s-XVG" % membrane_type, LocalFiles.surften_XVG, False)
+        simulation._share.add_file("distance-%s-XVG" % membrane_type, LocalFiles.distance_XVG, True)
+        simulation._share.add_file("%s-SURFTEN" % membrane_type, LocalFiles.SURFTEN_OUT, True)
+        simulation._share.add_file("%s-DIST" % membrane_type, LocalFiles.DIST_OUT, False)
+
+    # --- write ----------------------------------------------------------------------------
+    # One JSON per candidate. Across a campaign these files are the dataset: every observable
+    # on every sequence, including the ones the active objective ignored. Keeping the
+    # discarded observables is the cheapest thing in the pipeline and the hardest to recover
+    # later.
+    out_path = os.path.join(simulation._temp_dir, OBSERVABLES_FILENAME)
+    with open(out_path, "w") as handle:
+        json.dump(results, handle, indent=2, sort_keys=True)
+
+    simulation._output_variables["observables"] = results
+    simulation._share.add_file("observables", OBSERVABLES_FILENAME, True)
+
+
+def _parse_energy_terms(path_output, wanted):
+    """
+    Pull 'term  average  err.est.  rmsd  tot-drift' rows out of a gmx energy stdout dump.
+
+    gmx prints the statistics table after the interactive selection; the term name can contain
+    spaces and colons, so the row is matched by prefix against the requested term names rather
+    than split blindly on whitespace.
+    """
+    try:
+        lines = open(path_output, "r").read().splitlines()
+    except OSError:
+        return None
+
+    found = {}
+    for line in lines:
+        stripped = line.strip()
+        for term in wanted:
+            if not stripped.startswith(term):
+                continue
+            rest = stripped[len(term):].split()
+            if len(rest) < 2:
+                continue
+            try:
+                found[term] = (float(rest[0]), float(rest[1]))
+            except ValueError:
+                continue
+    return found or None
+
+
+def _sum_terms(terms, keys):
+    """Sum a set of energy terms, propagating their errors in quadrature."""
+    total = 0.0
+    var = 0.0
+    for key in keys:
+        if key not in terms:
+            continue
+        mean, err = terms[key]
+        total += mean
+        var += err ** 2
+    return total, float(np.sqrt(var))

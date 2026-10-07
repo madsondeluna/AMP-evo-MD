@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+output/
+*.xtc
+*.trr
+*.cpt
+*.log
+*.tpr
+# .edr is ignored in general but the POPC reference energies under calibration/ are kept as
+# provenance for where the original reference constants came from.
+*.edr
+!calibration/reference_popc/*.edr

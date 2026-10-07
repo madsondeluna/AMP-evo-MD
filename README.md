@@ -131,10 +131,15 @@ The calibration run comes first, and it uses no genetic algorithm.
 
 ## Installation on an Ubuntu workstation
 
-Tested against Ubuntu 22.04 and 24.04. Every command below is run as a normal user; only the
-`apt` lines need `sudo`.
+Two situations, with different first steps. Pick the one that matches the machine.
 
-### 1. System packages
+- **A: you have `sudo`.** Install the system packages, then continue from step 2.
+- **B: you do not have `sudo`, and GROMACS comes from a module.** The common lab and cluster
+  case. Skip to "Installing without root" below, then continue from step 2.
+
+Everything after step 1 is identical in both cases and needs no root.
+
+### 1A. System packages, with sudo
 
 ```bash
 sudo apt update
@@ -148,52 +153,143 @@ is typically 2 to 3 times faster because it is compiled for the machine's own in
 which matters a great deal across thousands of evaluations. A source build with MPI usually
 installs the binary as `gmx_mpi` rather than `gmx`; see the `GMX` variable below.
 
-Check what you have:
+### 1B. Installing without root
+
+Nothing in this pipeline needs to be installed system-wide. The three things `apt` would have
+provided are a GROMACS binary, an MPI library, and a Python with `venv`, and on a machine with
+environment modules the first two normally come from modules while the third is usually already
+present.
+
+**Find and load the modules.** The exact names vary by site, so list them rather than guessing:
 
 ```bash
-gmx --version | head -20        # or: gmx_mpi --version
+module avail 2>&1 | grep -i -E "gromacs|gmx"
+module avail 2>&1 | grep -i -E "openmpi|mpich|mpi|python"
 ```
 
-The line to read is `GROMACS version`. Anything from 2021 onward works. Note the `GPU support`
-line as well: with CUDA support the per-candidate cost drops substantially.
+Load GROMACS, and note whether it brings MPI with it:
+
+```bash
+module load gromacs            # use the exact name 'module avail' printed
+which gmx gmx_mpi
+gmx --version | head -20       # or gmx_mpi --version
+```
+
+The lines to read are `GROMACS version` (anything from 2021 onward works) and `GPU support`,
+since CUDA support cuts the per-candidate cost substantially. If the binary is `gmx_mpi`, set
+`export GMX=gmx_mpi` later; the pipeline reads that variable rather than assuming a name.
+
+**Put the module loads in a file, not in `.bashrc`.** A campaign that silently picks up a
+different GROMACS build partway through is not reproducible, and the difference will not show up
+anywhere in the output:
+
+```bash
+cat > ~/amp-env.sh <<'EOF'
+module purge
+module load gromacs            # the exact module name for this machine
+export GMX=gmx                 # or gmx_mpi
+export OMP_NUM_THREADS=4
+EOF
+```
+
+Source it before every run: `source ~/amp-env.sh`.
+
+**If `python3 -m venv` is unavailable.** Some minimal installs ship Python without `venv`. Check
+first, since this is usually a non-problem:
+
+```bash
+python3 -m venv --help >/dev/null 2>&1 && echo "venv ok" || echo "venv missing"
+```
+
+If it is missing, install a complete Python into your home directory with micromamba. It is a
+single static binary, needs no root, and does not touch anything outside `~/micromamba`:
+
+```bash
+cd ~
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
+./bin/micromamba shell init -s bash -p ~/micromamba
+source ~/.bashrc
+micromamba create -y -n amp python=3.11
+micromamba activate amp
+```
+
+With micromamba active, use `micromamba activate amp` wherever the steps below say
+`source .venv/bin/activate`, and skip the `python3 -m venv` line.
+
+**MPI without root.** `pip install mpi4py` now ships a binary wheel, and that wheel does not
+bundle an MPI library: it links dynamically against `libmpi.so.40` (OpenMPI) or `libmpi.so.12`
+(MPICH) and picks whichever it finds at import time. So as long as a module provides one of
+those, the wheel works with no compiler and no root. Verify after installing:
+
+```bash
+python -c "from mpi4py import MPI; print('MPI ok, size =', MPI.COMM_WORLD.Get_size())"
+```
+
+If that fails with `libmpi.so.* not found`, load an MPI module (`module load openmpi`) and try
+again. If it still fails, the site's MPI has an incompatible soname, and the fallback is to
+compile mpi4py against it:
+
+```bash
+export MPICC=$(which mpicc)
+pip install --no-binary=mpi4py --force-reinstall mpi4py
+```
+
+That needs a compiler, which a `gcc` module usually provides. And if none of this works, the
+pipeline still runs: `mpi4py` is optional throughout, and both the campaign and the calibration
+set fall back to a single process. It is slower, not blocked.
 
 ### 2. Python environment
 
-A virtual environment, not the system Python. The pipeline pins nothing, but `vermouth` and
-`PeptideBuilder` pull in versions that are better kept out of the system site-packages.
+A virtual environment, never the system Python. Nothing here is pinned, but `vermouth` and
+`PeptideBuilder` pull in versions that are better kept isolated, and on a shared machine you
+would not be able to install them system-wide anyway.
 
 ```bash
 git clone https://github.com/madsondeluna/AMP-evo-MD.git
 cd AMP-evo-MD
 
-python3 -m venv .venv
+python3 -m venv .venv            # or: micromamba activate amp
 source .venv/bin/activate
 
 pip install --upgrade pip
-pip install numpy matplotlib mpi4py vermouth PeptideBuilder
+pip install numpy matplotlib vermouth PeptideBuilder
+pip install mpi4py               # optional, see 1B; everything runs serially without it
 ```
 
 `vermouth` provides the `martinize2` command that converts an atomistic peptide into its
-coarse-grained topology. Confirm all three are reachable:
+coarse-grained topology. Confirm everything is reachable:
 
 ```bash
-python -c "import numpy, matplotlib, mpi4py, PeptideBuilder; print('python deps ok')"
+python -c "import numpy, matplotlib, PeptideBuilder; print('python deps ok')"
+python -c "from mpi4py import MPI; print('MPI ok')" || echo "no MPI: serial only, fine"
 martinize2 --version
+```
+
+If `pip` cannot reach the network on a locked-down machine, download the wheels on a machine
+that can and copy them over:
+
+```bash
+# on a machine with network access, matching the target's Python version:
+pip download numpy matplotlib vermouth PeptideBuilder mpi4py -d wheels/
+# then on the lab machine:
+pip install --no-index --find-links wheels/ numpy matplotlib vermouth PeptideBuilder
 ```
 
 ### 3. insane, for building membranes
 
-`insane.py` builds the initial lipid bilayer. It is not on PyPI; fetch it from the Martini
-distribution and put it on `PATH`:
+`insane.py` builds the initial lipid bilayer. It is not on PyPI, and it goes in your home
+directory, so this step needs no root either:
 
 ```bash
 mkdir -p ~/bin
 curl -L https://raw.githubusercontent.com/Tsjerk/Insane/master/insane.py -o ~/bin/insane
 chmod +x ~/bin/insane
-echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+export PATH="$HOME/bin:$PATH"
 insane --help | head -5
 ```
+
+Add that `PATH` line to `~/amp-env.sh` alongside the module loads, so a run always picks up the
+same set of tools.
 
 ### 4. Verify the installation
 
@@ -224,15 +320,23 @@ working.
 | `MARTINIZE2` | martinize2 binary | `martinize2` |
 | `OMP_NUM_THREADS` | threads per GROMACS process | set it explicitly, see below |
 
-For a source build whose binary is `gmx_mpi`:
+A complete `~/amp-env.sh` for a machine with modules and no root:
 
 ```bash
-export GMX=gmx_mpi
+module purge
+module load gromacs                 # the exact module name for this machine
+
+export GMX=gmx                      # or gmx_mpi, whichever 'which' found
+export MARTINIZE2=martinize2
+export OMP_NUM_THREADS=4
+export PATH="$HOME/bin:$PATH"       # for insane
+
+source "$HOME/AMP-evo-MD/.venv/bin/activate"
 ```
 
-Put the exports in a small `env.sh` next to the clone and source it before every run, rather
-than relying on `.bashrc`. A campaign that silently picks up a different GROMACS build halfway
-through is not reproducible, and the difference will not be visible in the output.
+Source it before every run, rather than relying on `.bashrc`. A campaign that silently picks up
+a different GROMACS build partway through is not reproducible, and the difference will not be
+visible anywhere in the output.
 
 ## Running it
 
@@ -243,8 +347,8 @@ entry point while the reference values are missing, which is deliberate: a plaus
 would propagate into every fitness value in the campaign while looking entirely reasonable.
 
 ```bash
-source .venv/bin/activate
-export GMX=gmx                      # or gmx_mpi
+source ~/amp-env.sh
+cd ~/AMP-evo-MD
 
 # First pass. Prints the plan and the insane command, then stops.
 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
@@ -328,18 +432,26 @@ Put one sequence per line in `seq.txt`, set `STATE = 1` in `run.py`, and set
 insertion-depth analysis reads it; the GA campaign later turns it back off, since storing
 trajectories for thousands of candidates fills a disk quickly.
 
-```bash
-mpirun -np 8 python run.py --output_dir calibration_run
-```
-
-Choose `-np` to match the physical cores, not threads: each MPI rank runs its own GROMACS
-process, and oversubscribing slows everything down. On a 32-core workstation, `-np 8` with
-`OMP_NUM_THREADS=4` is a reasonable starting point. Check with `nproc` and `lscpu`.
+With MPI:
 
 ```bash
 export OMP_NUM_THREADS=4
 mpirun -np 8 python run.py --output_dir calibration_run
 ```
+
+Without MPI, the same command minus `mpirun`. It runs the sequences one after another in a
+single process, which is slow but not blocked, and for a calibration set of a few dozen peptides
+it is a perfectly reasonable way to work:
+
+```bash
+export OMP_NUM_THREADS=16        # give the single GROMACS process more threads instead
+python run.py --output_dir calibration_run
+```
+
+Choosing `-np`: match the physical cores, not threads. Each MPI rank runs its own GROMACS
+process, and oversubscribing slows everything down. `-np` times `OMP_NUM_THREADS` should not
+exceed what `nproc` reports. On a 32-core workstation, `-np 8` with `OMP_NUM_THREADS=4` is a
+reasonable starting point. On a shared machine, leave headroom for whoever else is on it.
 
 ### Step 3: the go/no-go check
 
@@ -371,27 +483,38 @@ objective:
 OBJECTIVE = "damage"      # or "binding"
 ```
 
-```bash
-export OMP_NUM_THREADS=4
-nohup mpirun -np 8 python run.py --output_dir campaign_damage > campaign.log 2>&1 &
-```
-
-`nohup` and the trailing `&` matter: a campaign runs for days, and an interrupted SSH session
-should not kill it. Better still, run it inside `tmux` or `screen` so you can reattach:
+A campaign runs for days, so it must survive a dropped SSH session. Use `tmux`, which lets you
+reattach and watch, rather than `nohup`, which does not:
 
 ```bash
 tmux new -s campaign
 # inside tmux:
-mpirun -np 8 python run.py --output_dir campaign_damage
-# detach with Ctrl-b then d; reattach later with: tmux attach -t campaign
+source ~/amp-env.sh
+cd ~/AMP-evo-MD
+mpirun -np 8 python run.py --output_dir campaign_damage      # drop mpirun if no MPI
+# detach with Ctrl-b then d
 ```
 
-Resuming after a crash or a reboot:
+Reattach later from any session with `tmux attach -t campaign`. If `tmux` is not installed and
+you cannot install it, `screen` is usually present, and failing both:
+
+```bash
+nohup mpirun -np 8 python run.py --output_dir campaign_damage > campaign.log 2>&1 &
+```
+
+Resuming after a crash, a reboot, or a scheduler kill:
 
 ```bash
 mpirun -np 8 python run.py --output_dir campaign_damage \
     --restart campaign_damage/checkpoint.dat
 ```
+
+Without MPI, a full campaign in a single process is likely impractical: the default is 144
+candidates over 100 iterations, each candidate two 400 ns runs. Measure one candidate first
+(see "Resource planning") and multiply before committing to it. If the serial rate is too slow,
+the realistic options are getting MPI working, reducing the population and iteration count, or
+moving the campaign to a cluster with a scheduler. The calibration set, which is what actually
+has to happen first, is fine serially.
 
 ### Step 5: watch it while it runs
 
@@ -452,14 +575,25 @@ which reference values are missing.
 installed in it. Run `source .venv/bin/activate` and `pip install vermouth`. If martinize2 lives
 somewhere else, set `export MARTINIZE2=/full/path/to/martinize2`.
 
-**`gmx: command not found`.** Either GROMACS is not installed, or the binary is named something
-else. Run `which gmx gmx_mpi` and set `export GMX=` to whichever exists. On a cluster, the
-module may need loading first: `module load gromacs`.
+**`gmx: command not found`.** Either GROMACS is not loaded, or the binary is named something
+else. Run `module list` to see what is loaded and `which gmx gmx_mpi` to find the binary, then
+`export GMX=` whichever exists. On a machine with modules, `module load gromacs` comes first and
+has to be repeated in every new shell, which is why it belongs in `~/amp-env.sh`.
 
-**`ModuleNotFoundError: No module named 'mpi4py'`.** `mpi4py` compiles against the system MPI,
-so `libopenmpi-dev` must be installed before `pip install mpi4py`. If it was installed after,
-reinstall with `pip install --no-cache-dir --force-reinstall mpi4py`. The package also runs
-single-process without `mpi4py`, which is enough for testing but not for a campaign.
+**`ImportError: libmpi.so.40: cannot open shared object file`.** The mpi4py wheel found no MPI
+library to link against. Load an MPI module (`module load openmpi`) and retry. If the site's MPI
+has a different soname, rebuild mpi4py against it with `export MPICC=$(which mpicc)` followed by
+`pip install --no-binary=mpi4py --force-reinstall mpi4py`, which needs a compiler from a `gcc`
+module. If none of that is available, run without MPI: both the campaign and the calibration set
+fall back to a single process.
+
+**`mpirun: command not found`.** No MPI in the environment. Drop `mpirun -np N` from the command
+and run `python run.py ...` directly. Raise `OMP_NUM_THREADS` to give the single GROMACS process
+the cores the MPI ranks would have used.
+
+**`Permission denied` writing anywhere.** Everything this pipeline writes goes under the clone
+and the directories passed with `--output_dir`, so run it from a path you own, such as
+`~/AMP-evo-MD`, and not from a shared or read-only location.
 
 **Surface tension will not reach zero.** The box area and the composition's equilibrium area
 disagree. Re-run the second planning pass with the measured area per lipid and rebuild with the
@@ -574,13 +708,13 @@ across the two without accounting for that.
 | Component | Needed for | Notes |
 |---|---|---|
 | Python 3.8 or newer | everything | |
-| GROMACS 2021 or newer | all simulation | Ubuntu's `gromacs` package works; a source build is 2 to 3 times faster |
+| GROMACS 2021 or newer | all simulation | from `apt`, from a module, or a source build; the binary name is read from `$GMX` |
 | `numpy` | observables, analysis | |
 | `matplotlib` | figures | analysis only, not needed to run a campaign |
 | `vermouth` (`martinize2`) | coarse-graining peptides | |
 | `PeptideBuilder` | atomistic helix construction | |
 | `insane` | building membranes | not on PyPI, fetched separately |
-| `mpi4py` | parallel evaluation | optional; without it everything imports and scores, but runs single-process |
+| `mpi4py` | parallel evaluation | optional; without it the campaign and the calibration set both run single-process |
 
 The Martini 3 force field files are included under `user/base/`, so no separate download is
 needed for those.

@@ -107,16 +107,25 @@ def _run_specific_sequences(sequences):
     that run shows the observables separating known actives from known inactives, nothing the
     GA produces can be interpreted.
     """
+    # Runs serially when mpi4py is absent, rather than exiting as upstream did. The calibration
+    # set is a few dozen peptides, which is slow without MPI but entirely possible, and on a
+    # machine without root the MPI stack is the single most likely thing to be missing. The
+    # genetic algorithm already degrades to serial the same way; this path should not be the
+    # one hard requirement that blocks the whole pipeline.
     MPI = None
     try:
         from mpi4py import MPI
     except ImportError:
-        print("ERROR: Missing mpi4py. Exiting.")
-        sys.exit(1)
+        pass
 
-    comm = MPI.COMM_WORLD
-    size = comm.Get_size()
-    rank = comm.Get_rank()
+    if MPI is None:
+        size, rank = 1, 0
+        mprint("mpi4py not available: running %d sequences serially in this process."
+               % len(sequences))
+    else:
+        comm = MPI.COMM_WORLD
+        size = comm.Get_size()
+        rank = comm.Get_rank()
 
     buffer = [[] for _ in range(size)]
 

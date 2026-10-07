@@ -106,9 +106,12 @@ remains to be established. Recruitment against a host membrane is what the bindi
 measures. The tension between the two steps, cationic for recruitment and anionic for pore-rim
 stabilisation, is the interesting part rather than a contradiction to resolve.
 
-Adopted from their methodology, all of it force-field independent: neutral peptide termini,
-explicit physiological salt, replicate evaluations per candidate, and the exclusion of isoleucine
-on the grounds documented in `user/usersettings.py`.
+Adopted from their methodology, all of it force-field independent: neutral peptide termini
+(`martinize2 -nt`, since charged termini add an orientation-dependent contribution to the
+measured surface tension that has nothing to do with the sequence), explicit physiological salt
+in the membrane build, and the exclusion of isoleucine on the grounds documented in
+`user/usersettings.py`. Replicate evaluations per candidate are not yet implemented; the genetic
+algorithm's rerun averaging covers only the elites.
 
 ## Order of work
 
@@ -117,8 +120,9 @@ The calibration run comes first, and it uses no genetic algorithm.
 1. **Build and calibrate the membranes.** Each composition needs its own reference
    measurements, taken on the peptide-free membrane: box area, free-membrane surface tension,
    and bilayer thickness. These are not transferable between compositions. The procedure is
-   documented at the top of `user/membranes.py`. Until they are filled in, every entry point
-   refuses to start.
+   documented at the top of `user/membranes.py`. Until they are filled in, anything that would
+   run a simulation refuses to start. `calibrate.py` does not check, because re-scoring an
+   existing result set does not touch the membranes.
 2. **Measure the calibration set.** Run a few dozen peptides with known MIC and hemolysis
    through the pipeline with `STATE = 1` in `run.py`. Prioritise coverage of the regimes over
    potency: an inactive peptide and a non-selective lytic one are what fix the ends of the
@@ -231,8 +235,8 @@ echo "alias ampenv='source ~/amp-env.sh'" >> ~/.bashrc
 
 Then `ampenv` loads it and the rest of the machine stays untouched.
 
-`GMX_VERSION_EXPECT` pins the build. Every entry point checks the running GROMACS against it and
-stops with a clear message on a mismatch, rather than producing numbers that silently do not
+`GMX_VERSION_EXPECT` pins the build. `run.py` checks the running GROMACS against it at the start
+of both the campaign and the calibration run, and stops with a clear message on a mismatch, rather than producing numbers that silently do not
 belong with the rest of the campaign. Matching is a prefix test, so `2024` accepts any 2024.x
 and `2024.3` does not accept `2024.4`. Leave it unset and the version is recorded but not
 enforced.
@@ -411,9 +415,10 @@ rather than the pinned one.
 
 ### Step 1: prepare and calibrate the membranes
 
-Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMembrane` on any
-entry point while the reference values are missing, which is deliberate: a plausible placeholder
-would propagate into every fitness value in the campaign while looking entirely reasonable.
+Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMembrane` from
+`run.py` and from the simulation modules while the reference values are missing, which is
+deliberate: a plausible placeholder would propagate into every fitness value in the campaign
+while looking entirely reasonable.
 
 ```bash
 # First pass. Prints the plan and the insane command, then stops.
@@ -493,10 +498,15 @@ python -c "import user.membranes as m; m.require_all_calibrated(); print('membra
 
 ### Step 2: measure the calibration set
 
-Put one sequence per line in `seq.txt`, set `STATE = 1` in `run.py`, and set
-`WRITE_XTC = True` in `user/usersettings.py`. The trajectory is needed here because the
-insertion-depth analysis reads it; the GA campaign later turns it back off, since storing
-trajectories for thousands of candidates fills a disk quickly.
+Put one sequence per line in `seq.txt` and set `STATE = 1` in `run.py`.
+
+`WRITE_XTC` does not need changing for this. It does not control whether the trajectory is
+written, only whether it is kept: `production.py` always writes the `.xtc` into the simulation's
+temporary directory, which is where the insertion-depth analysis reads it from, and the flag
+decides whether that file is then copied into the output directory. Set it `True` only if you
+want to inspect the calibration trajectories afterwards. A campaign must have it `False`, which
+`run.py` enforces, because keeping a trajectory per candidate across thousands of evaluations
+fills a disk.
 
 With MPI, using the layout `amp-env.sh` computed:
 
@@ -530,7 +540,7 @@ many independent candidates, so throughput is what counts, not how fast any one 
 finishes. A roughly 5000-particle Martini system stops scaling after a few threads, because
 domain decomposition and communication overhead grow faster than the work does. Fifteen ranks of
 two threads therefore completes fifteen candidates in about the time four ranks of eight threads
-completes four, on the same thirty cores. The default is two threads per rank for that reason.
+completes four, on about the same thirty cores. The default is two threads per rank for that reason.
 
 On a 32-core workstation the script returns fifteen ranks of two threads, leaving one core free
 for the session and one idle because thirty-one does not divide by two. To use that last core,
@@ -734,10 +744,11 @@ in either objective knows where the rupture threshold lies. Establishing it requ
 unbiased runs or biased sampling on the top candidates, outside the loop.
 
 **Electrostatics.** The inherited settings are `epsilon_r = 15` with reaction-field
-electrostatics and non-polarisable water, and the systems carry no salt beyond the counterions
-added for neutralisation. For a cationic peptide against an anionic membrane that combination
-is the least favourable case. Physiological ionic strength and polarisable water should be
-evaluated before any quantitative claim.
+electrostatics and non-polarisable water. Upstream also carried no salt beyond the neutralising
+counterions; membranes built with `tools/protocol.sh` add 0.15 M on top of those, so that part
+of the inherited setup is addressed. The water model is not: for a cationic peptide against an
+anionic membrane, non-polarisable water with `epsilon_r = 15` remains the least favourable
+combination, and polarisable water should be evaluated before any quantitative claim.
 
 **Force field.** This fork keeps Martini 3, inherited from reference 1. Reference 2 chose a
 hybrid Martini 2.2 model with polarisable water instead, citing a report that Martini 3 captures
@@ -820,6 +831,7 @@ needed for those.
 
 ```
 core/                        genetic algorithm and GROMACS wrappers, from upstream
+  provenance.py              records which GROMACS produced a run; added by this fork
 user/
   membranes.py               membrane registry and reference measurements
   usersettings.py            run configuration, objective selection

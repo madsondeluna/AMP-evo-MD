@@ -68,7 +68,10 @@ def orientation_factor(d_mem, b):
     """
     if b is None or b <= 0:
         raise ValueError("orientation_factor needs a positive b (got %r)" % b)
-    if d_mem < UserSettings.a or d_mem > 2 * (b - UserSettings.a):
+    # Upper bound is 2b - a, where the cosine completes its period, not 2(b - a). The two
+    # coincide only because UserSettings.a is 0.0; with a nonzero lower bound the factor would
+    # jump discontinuously to zero while the cosine was still well away from it.
+    if d_mem < UserSettings.a or d_mem > 2 * b - UserSettings.a:
         return 0.0
     return -0.5 * (np.cos((d_mem - UserSettings.a) * np.pi / (b - UserSettings.a)) - 1)
 
@@ -118,7 +121,16 @@ def module_compute_observables(simulation):
                 path_stdout=path(path_out),
                 path_stderr=path(path_out),
             )
-            return Gromacs.GMX_average_ENERGY_output(path(path_out))
+            parsed = Gromacs.GMX_average_ENERGY_output(path(path_out))
+            if parsed is None:
+                # Raised as a SimulationError so run.py's retry logic engages. A bare TypeError
+                # from unpacking None is not caught there, and a single truncated file would
+                # otherwise kill an entire campaign instead of triggering a rerun.
+                raise System.SimulationError(
+                    "could not parse the statistics table from %s. The gmx energy output is "
+                    "empty or truncated, which usually means the run was killed mid-write."
+                    % path_out)
+            return parsed
 
         def read_surften():
             mean, err = gmx_energy("#Surf*SurfTen\n",
@@ -146,6 +158,16 @@ def module_compute_observables(simulation):
                                         UserSettings.ENERGY_group_terms)
             if terms is None:
                 return None, "could not parse interaction terms from the gmx energy output"
+            # Every requested term, not merely one of them. A partial parse used to pass here and
+            # _sum_terms would then skip the missing keys and return 0.0, which reaches the
+            # binding objective as a perfectly plausible zero interaction energy. Half a sum is
+            # worse than no sum, because nothing downstream can tell the difference.
+            missing = [t for t in UserSettings.ENERGY_group_terms if t not in terms]
+            if missing:
+                return None, ("gmx energy output is missing %s (found %s). The group names in "
+                              "the .edr do not match ENERGY_group_terms; check energygrps in "
+                              "npt.mdp and the index groups."
+                              % (", ".join(missing), ", ".join(sorted(terms))))
             return terms, None
 
         def read_distance():

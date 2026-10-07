@@ -41,8 +41,11 @@ PROD_NS="${PROD_NS:-400}"      # constant area, the reference run
 ROOT="${ROOT:-prep}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIR="${ROOT}/${NAME}"
-mkdir -p "${DIR}"
+# Absolute before the cd. ROOT is relative by default, so after 'cd "${DIR}"' a later
+# 'cd "${HERE}"' would leave the analysis commands resolving ${DIR} against the repository root
+# rather than against the directory the script was invoked from.
+mkdir -p "${ROOT}/${NAME}"
+DIR="$(cd "${ROOT}/${NAME}" && pwd)"
 cd "${DIR}"
 
 MDP_DIR="${HERE}/user/base/production"
@@ -69,6 +72,20 @@ if [ "${AUTO:-0}" != "1" ]; then
     echo "Re-run with AUTO=1 once the plan looks right, to execute the remaining steps."
     exit 0
 fi
+
+if [ "${PASS:-1}" = "2" ]; then
+    # Pass 2 resumes from a system the user rebuilt and re-equilibrated by hand, so rebuilding
+    # here would overwrite it with the pass-1 lipid counts and feed those into production. That
+    # is the one outcome this whole two-pass procedure exists to avoid.
+    if [ ! -f equil.gro ]; then
+        echo "PASS=2 expects an equilibrated system in ${DIR}/equil.gro." >&2
+        echo "Rebuild with the lipid counts from plan_pass2.txt, re-run the minimisation and" >&2
+        echo "the zero-tension equilibration, then run PASS=2 again." >&2
+        exit 1
+    fi
+    echo "PASS=2: resuming from the existing equil.gro, skipping build and equilibration."
+    say "6/7  production at constant area (the peptide-free reference run)"
+else
 
 BUILD_CMD=$(grep -A2 '^insane' plan_pass1.txt | tr '\n' ' ' | sed 's/\\ / /g')
 
@@ -142,33 +159,54 @@ echo "measured mean area per lipid: ${MEAN_APL} nm2"
 python3 "${HERE}/tools/membrane.py" plan \
     --name "${NAME}" --composition "${COMPOSITION}" \
     --box "${BOX}" --max-residues "${MAX_RESIDUES}" --salt "${SALT}" \
-    --apl "MEAN=${MEAN_APL}" | tee plan_pass2.txt || true
+    --apl "MEAN=${MEAN_APL}" | tee plan_pass2.txt
 
 echo
-echo "Pass 2 uses the measured area per lipid. Rebuild with its lipid counts, then re-run"
-echo "steps 3 and 4, before continuing to production. Set PASS=2 to skip straight to"
-echo "production once the rebuilt system has been equilibrated."
+echo "Pass 2 uses the measured area per lipid. Rebuild with its lipid counts, re-run the"
+echo "minimisation and the zero-tension equilibration, and then run this script again with"
+echo "PASS=2 to continue from the rebuilt equil.gro into production."
+exit 0
 
-if [ "${PASS:-1}" != "2" ]; then
-    exit 0
-fi
+fi   # end of the pass-1 branch
 
-# ---------------------------------------------------------------------------
-say "6/7  production at constant area (the peptide-free reference run)"
 # ---------------------------------------------------------------------------
 cp equil.gro "${NAME}_eq.gro"
+
+# The production mdp is written for peptide-in-membrane systems: its tc-grps names Protein,
+# Solvent and Lipids, which the pipeline builds with its own make_ndx. This membrane has no
+# peptide, so a Protein group cannot exist and grompp would abort on it. Couple the two groups
+# that do exist here instead, leaving every other setting in npt.mdp untouched so the reference
+# run and the candidate runs share an identical ensemble, which is the whole point of measuring
+# a reference.
 sed -e "s|\$INCLUDE_CWD|-I$(pwd)|" \
     -e "s|\$SIM_DT|0.03|" \
     -e "s|\$SIM_NSTEPS|$(python3 -c "print(int(${PROD_NS}*1000/0.03))")|" \
+    -e "s|^tc-grps.*|tc-grps                  = Solvent non-Solvent|" \
+    -e "s|^tau_t.*|tau_t                    = 1.0 1.0|" \
+    -e "s|^ref_t.*|ref_t                    = 310 310|" \
+    -e "s|^energygrps.*|energygrps               =|" \
     "${MDP_DIR}/npt.mdp" > prod.mdp
+
+# Solvent and non-Solvent are GROMACS default groups, so no index file is needed. Confirm the
+# substitution took, because a silently unmodified mdp fails later and more confusingly.
+if grep -q "Protein" prod.mdp; then
+    echo "prod.mdp still references a Protein group; the tc-grps substitution did not apply." >&2
+    exit 1
+fi
+
 "${GMX}" grompp -f prod.mdp -c "${NAME}_eq.gro" -p "${NAME}.top" -o "${NAME}.tpr" -maxwarn 2
 "${GMX}" mdrun -deffnm "${NAME}" -nt "${NT}"
 
 # ---------------------------------------------------------------------------
 say "7/7  extract, analyse, emit the MembraneDef"
 # ---------------------------------------------------------------------------
+# -b discards the first half, matching the equil_fraction membrane_analysis.py uses. Without
+# it the MembraneDef would carry a whole-trajectory average while the verdict printed next to it
+# reports the equilibrated one, and the two would disagree with no indication why.
+PROD_HALF=$(python3 -c "print(int(${PROD_NS}*1000/2))")
 printf 'Box-X\nBox-Y\n#Surf*SurfTen\n\n' \
-    | "${GMX}" energy -f "${NAME}.edr" -o "${NAME}_energy.xvg" > "${NAME}_free.ENERGY" 2>&1
+    | "${GMX}" energy -f "${NAME}.edr" -o "${NAME}_energy.xvg" -b "${PROD_HALF}" \
+      > "${NAME}_free.ENERGY" 2>&1
 
 cd "${HERE}"
 python3 tools/membrane_analysis.py single --name "${NAME}" --dir "${DIR}"

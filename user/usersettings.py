@@ -3,7 +3,6 @@ import sys
 import core.system as System
 import getopt
 import subprocess
-import numpy as np
 
 ##############
 ## Settings ##
@@ -163,7 +162,11 @@ max_length                          = 24 # maximal sequence length
 # lower it. Keep R enabled in 'propensities' if the lower bound is positive, otherwise the
 # correction has only K to work with.
 charge_range                        = [3, 9]
-repeat_mutations                    = [-1,1] # -1: decrease/increase number of repeats. Set to [0] to switch off.
+# Dead. mutate_repeat is never called: its only call site in generate_new_population is
+# commented out upstream. Independently, with rep_lengths = [24], repeats = [1] and
+# min_length == max_length, any repeat mutation would produce a length the constraint rejects.
+# Kept so the upstream signature still matches, but changing it has no effect.
+repeat_mutations                    = [-1,1]
 pept_position                       = [1/3] # position on the membrane (*box_length from the center)
 rotate_vector                       = (0,0,90)
 equilibration_time                  = 500 # ps
@@ -348,6 +351,19 @@ def command_modeller(path_sequence, path_structure, path_PDB, name, ali, outdir)
 path_martinize2                     = os.environ.get("MARTINIZE2", "martinize2")
 
 
+# Neutral peptide termini, via martinize2's -nt. Charged termini are the martinize2 default and
+# were what upstream used. Two reasons to turn them off here. They add a charge at each end whose
+# interaction with the membrane depends on how the helix happens to be oriented, which is
+# variability in the measured surface tension that has nothing to do with the sequence being
+# evaluated. And they are inconsistent with the experimental literature this pipeline is
+# calibrated against, where at least one terminus is usually capped. Reference 2 made the same
+# choice for the same reason.
+#
+# This changes the net charge of every peptide by up to two units relative to an uncapped one, so
+# charge_range here is the charge of the side chains alone.
+NEUTRAL_TERMINI                     = True
+
+
 def command_martinize2(path_PDB_in, structure, path_PDB_out, path_TOP, ff=ff, elastic=False):
     command = path_martinize2
     command += " -f " + path_PDB_in
@@ -355,6 +371,8 @@ def command_martinize2(path_PDB_in, structure, path_PDB_out, path_TOP, ff=ff, el
     command += " -o " + path_TOP
     command += " -ss " + structure
     command += " -ff " + ff
+    if NEUTRAL_TERMINI:
+        command += " -nt"
     if elastic:
         command += " -elastic"
     return command
@@ -373,22 +391,8 @@ def command_whereamI():
 #     command += " --molname " + molname
 #     return command
 
-# Energy Analysis #
-def get_ENERGY_select_groups():
-    result = []
-    result.extend(ENERGY_select_groups)
-    return result
-
-def old_correction_factor(x, a, b):
-    if x < a or x > 2*(b-a):
-            factor = 0.0
-    else:
-            factor = -0.5 * (np.cos((x-a)*np.pi/(b-a)) - 1)
-    return factor
-
-def correction_factor(x, b):
-    if x < b/2 or x > 3*b/2:
-            factor = 0.0
-    else:
-            factor = -0.5 * (np.cos((x-b/2)*2*np.pi/b) - 1)
-    return factor
+# The orientation factor lives in user/modules/compute_observables.orientation_factor, which is
+# the single implementation the pipeline uses. Two variants used to sit here: one duplicating it
+# including a window bound that has since been corrected there, and one implementing a different
+# window shape altogether. Both were dead, and an alternative definition of the same physical
+# weighting next to the settings is a trap for anyone reconstructing what was applied.

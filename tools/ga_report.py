@@ -41,8 +41,13 @@ import mdtools
 
 ITER_RE = re.compile(r"^Iteration\s+(\d+)\s*:")
 # "\tSEQUENCE\tfitness\tddF=...\tpenalty=...\tn_run=..."
+# The numeric fields are written with str(float), which produces repr form: 6.17e-05 and
+# -3.4e-07 as well as plain decimals, plus inf and nan. An earlier pattern omitted the minus
+# inside the exponent, so every row with a value below 1e-4 failed to match and the candidate
+# vanished from the fitness, diversity and entropy metrics without appearing in any of them.
+_NUM = r"[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?|[iI]nf(?:inity)?|[nN]a[nN])"
 ROW_RE = re.compile(
-    r"^\t([A-Z]+)\t(-?[\d.eE+naN]+)\tddF=(-?[\d.eE+naN]+)\tpenalty=(-?[\d.eE+naN]+)\tn_run=(\d+)"
+    r"^\t([A-Z]+)\t(%s)\tddF=(%s)\tpenalty=(%s)\tn_run=(\d+)" % (_NUM, _NUM, _NUM)
 )
 
 
@@ -55,7 +60,8 @@ def _float(text):
 
 def parse_progress(path):
     """
-    Return (settings, iterations) where iterations is an ordered {index: [record, ...]}.
+    Return (settings, iterations, unparsed), where iterations is an ordered
+    {index: [record, ...]} and unparsed counts rows that did not match the expected format.
 
     Records are dicts with sequence, fitness, raw, orientation and n_run. Rows that do not parse
     are counted and reported rather than silently dropped: a changed output format should be
@@ -109,8 +115,15 @@ def summarise(iterations, n_parents):
         finite = fitness[np.isfinite(fitness)]
         if finite.size == 0:
             continue
-        order = np.argsort(-fitness)
-        parents = fitness[order[:min(n_parents, len(records))]]
+        # Rank on finite values only. np.argsort places NaN last, so an iteration with enough
+        # failed evaluations would otherwise pull NaN into the parent slice and the column would
+        # read nan while the neighbouring population mean still reported a number.
+        order = np.argsort(np.where(np.isfinite(fitness), -fitness, np.inf))
+        n_take = min(n_parents, int(np.isfinite(fitness).sum()) or 1)
+        parents = fitness[order[:n_take]]
+        parents = parents[np.isfinite(parents)]
+        if parents.size == 0:
+            parents = finite
         sequences = [r["sequence"] for r in records]
 
         entropy = mdtools.positional_entropy(sequences)
@@ -414,6 +427,11 @@ def main():
                    "top": top_sequences(iterations, args.top)}, handle, indent=2)
 
     print_summary(settings, rows, iterations, last_improved, args.top, unparsed)
+
+    if not rows:
+        # print_summary already said so. The figures index into rows unconditionally, so bail
+        # rather than raising a ValueError from max() on an empty sequence.
+        return
 
     if not args.no_figures:
         figure_performance(rows, os.path.join(args.outdir, "performance.png"), last_improved)

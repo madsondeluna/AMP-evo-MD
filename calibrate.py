@@ -36,11 +36,23 @@ import user.usersettings as UserSettings
 from user.modules.compute_fitness import score_observables
 
 
-CLASS_ORDER = {"inactive": 0, "selective": 1, "lytic": 2}
+# The expected fitness order of the classes depends on the objective, and getting this wrong
+# produces a confident, wrong go/no-go verdict on a working configuration.
+#
+# damage  maximises strain on the target membrane, so a lytic peptide should outrank a selective
+#         one, which should outrank an inactive one.
+# binding maximises affinity for the target MINUS affinity for the host. A non-selective lytic
+#         peptide binds the host strongly and is penalised for it, so it belongs between the
+#         inactive and the selective peptides, not above both.
+CLASS_ORDER_BY_OBJECTIVE = {
+    "damage":  {"inactive": 0, "selective": 1, "lytic": 2},
+    "binding": {"inactive": 0, "lytic": 1, "selective": 2},
+}
+CLASS_NAMES = ("inactive", "selective", "lytic")
 
 
 def find_results(root):
-    """Yield (sequence, observables) for every observables.json under root."""
+    """Yield (sequence, observables, dirpath) for every observables.json under root."""
     for dirpath, _dirnames, filenames in os.walk(root):
         if "observables.json" not in filenames:
             continue
@@ -67,29 +79,31 @@ def load_labels(path):
         for row in csv.DictReader(handle):
             seq = row["sequence"].strip().upper()
             cls = row["class"].strip().lower()
-            if cls not in CLASS_ORDER:
+            if cls not in CLASS_NAMES:
                 sys.exit("Unknown class %r for %s; expected one of %s"
-                         % (cls, seq, ", ".join(CLASS_ORDER)))
+                         % (cls, seq, ", ".join(CLASS_NAMES)))
             labels[seq] = cls
     return labels
 
 
-def concordance(rows):
+def concordance(rows, objective):
     """
-    Fraction of labelled pairs ordered correctly by fitness.
+    Fraction of labelled pairs ordered correctly by fitness, for this objective.
 
     A plain rank-agreement statistic over the pairs whose true classes differ. Pairs within a
-    class are skipped, since the labels carry no ordering inside a class. This is a coarse
-    check and is meant to be: at this stage the question is whether the signal exists at all,
-    not how strong it is.
+    class are skipped, since the labels carry no ordering inside a class. This is a coarse check
+    and is meant to be: at this stage the question is whether the signal exists at all, not how
+    strong it is. The expected class order comes from the objective, because the two objectives
+    do not rank a non-selective lytic peptide the same way.
     """
+    order = CLASS_ORDER_BY_OBJECTIVE[objective]
     labelled = [r for r in rows if r["class"] is not None]
     concordant = 0
     total = 0
     for i in range(len(labelled)):
         for j in range(i + 1, len(labelled)):
             a, b = labelled[i], labelled[j]
-            ra, rb = CLASS_ORDER[a["class"]], CLASS_ORDER[b["class"]]
+            ra, rb = order[a["class"]], order[b["class"]]
             if ra == rb:
                 continue
             total += 1
@@ -177,7 +191,11 @@ def main():
         ))
 
     if labels:
-        score, pairs = concordance(rows)
+        score, pairs = concordance(rows, objective)
+        print()
+        order = CLASS_ORDER_BY_OBJECTIVE[objective]
+        print("expected order for '%s': %s"
+              % (objective, " < ".join(sorted(order, key=order.get))))
         print()
         if score is None:
             print("No cross-class pairs to compare; add peptides from more than one class.")

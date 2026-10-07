@@ -168,8 +168,6 @@ class TestRegistryRoles(unittest.TestCase):
         self.assertEqual(Membranes.the_host().name, "host")
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestMetadataTolerance(unittest.TestCase):
@@ -206,3 +204,77 @@ class TestMetadataTolerance(unittest.TestCase):
             plain, _ = score_observables(observables(2.0, 0.3), objective=objective)
             tagged, _ = score_observables(self._with_metadata(), objective=objective)
             self.assertAlmostEqual(plain, tagged, msg="objective=%s" % objective)
+
+
+class TestOrientationWithNegativeRaw(unittest.TestCase):
+    """
+    A detached peptide must never outrank an attached one.
+
+    The orientation factor is in [0, 1] and was applied as a plain multiplier. On a maximised
+    fitness that inverts its purpose for any negative raw score: a peptide that had left the
+    membrane (factor 0) scored exactly 0, beating every attached peptide that merely performed
+    badly, so the optimiser was rewarded for producing peptides that detach. Upstream guarded
+    against this by applying the factor only when the raw score was positive; the rewrite dropped
+    the guard and these tests pin it back.
+    """
+
+    def setUp(self):
+        UserSettings.APPLY_orientation_factor = True
+        UserSettings.BINDING_proxy = "interaction_energy"
+        UserSettings.DAMAGE_host_tolerance = 0.0
+        UserSettings.DAMAGE_host_weight = 1.0
+
+    def _pair(self, dg):
+        attached = observables(dg, 0.0)
+        detached = observables(dg, 0.0)
+        for name in ("bacterial", "host"):
+            detached[name]["orientation"] = 0.0
+        return attached, detached
+
+    def test_damage_detached_does_not_beat_attached(self):
+        for dg in (-3.0, -1.0, -0.1):
+            attached, detached = self._pair(dg)
+            fa, _ = fitness_damage.fitness_from_observables(attached)
+            fd_, _ = fitness_damage.fitness_from_observables(detached)
+            self.assertLessEqual(fd_, fa, "detached outranked attached at delta_gamma=%s" % dg)
+
+    def test_binding_detached_does_not_beat_attached(self):
+        for dg in (-3.0, -1.0, -0.1):
+            attached, detached = self._pair(dg)
+            attached["bacterial"]["e_lipids"] = {"mean": 50.0, "err": 5.0}
+            detached["bacterial"]["e_lipids"] = {"mean": 50.0, "err": 5.0}
+            fa, _ = fitness_binding.fitness_from_observables(attached)
+            fb, _ = fitness_binding.fitness_from_observables(detached)
+            self.assertLessEqual(fb, fa)
+
+    def test_penalty_still_applies_to_good_candidates(self):
+        # The guard must not disable the orientation penalty where it belongs.
+        attached, detached = self._pair(3.0)
+        fa, _ = fitness_damage.fitness_from_observables(attached)
+        fd_, _ = fitness_damage.fitness_from_observables(detached)
+        self.assertGreater(fa, fd_)
+        self.assertAlmostEqual(fd_, 0.0)
+
+    def test_partial_orientation_scales_a_positive_score(self):
+        obs = observables(4.0, 0.0)
+        obs["bacterial"]["orientation"] = 0.5
+        fitness, components = fitness_damage.fitness_from_observables(obs)
+        self.assertAlmostEqual(components["orientation_factor"], 0.5)
+        self.assertAlmostEqual(fitness, 0.5 * components["raw"])
+
+
+class TestBindingProxyGuards(unittest.TestCase):
+
+    def setUp(self):
+        UserSettings.APPLY_orientation_factor = True
+
+    def test_depth_proxy_reports_missing_depth(self):
+        UserSettings.BINDING_proxy = "depth"
+        obs = observables(1.0, 0.0)
+        del obs["bacterial"]["d_mem"]
+        with self.assertRaises(fitness_binding.BindingProxyUnavailable):
+            fitness_binding.fitness_from_observables(obs)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -89,33 +89,62 @@ def parse_composition(text):
 
 
 def mean_apl(comp, overrides):
-    """Area-weighted mean area per lipid for a composition, in nm2."""
+    """
+    Mole-fraction weighted mean area per lipid for a composition, in nm2.
+
+    The special key MEAN overrides the whole mixture with one measured value, which is what the
+    second planning pass uses: after equilibrating, the measured quantity is the mean area per
+    lipid of the mixture as a whole, not a value per lipid type. Returns (value, measured) so the
+    caller can label the output honestly rather than inferring it from whether any override was
+    supplied.
+    """
+    if "MEAN" in overrides:
+        return overrides["MEAN"], True
+
     total = 0.0
     missing = []
+    measured = False
     for name, fraction in comp.items():
-        apl = overrides.get(name, APL_SEED_NM2.get(name))
+        if name in overrides:
+            apl = overrides[name]
+            measured = True
+        else:
+            apl = APL_SEED_NM2.get(name)
         if apl is None:
             missing.append(name)
             continue
         total += fraction * apl
     if missing:
         raise SystemExit(
-            "No area-per-lipid value for: %s. Add it with --apl NAME=VALUE, or add a seed to "
-            "APL_SEED_NM2 in this file if it is a lipid you will use repeatedly."
+            "No area-per-lipid value for: %s. Add it with --apl NAME=VALUE, pass one measured "
+            "mixture value with --apl MEAN=VALUE, or add a seed to APL_SEED_NM2 in this file if "
+            "it is a lipid you will use repeatedly."
             % ", ".join(missing)
         )
-    return total
+    return total, measured
 
 
 def cmd_plan(args):
     comp = parse_composition(args.composition)
     overrides = {}
     for item in args.apl or []:
+        if "=" not in item:
+            raise SystemExit("--apl expects NAME=VALUE (got %r)" % item)
         name, value = item.split("=", 1)
-        overrides[name.strip().upper()] = float(value)
+        name = name.strip().upper()
+        if name != "MEAN" and name not in comp:
+            raise SystemExit(
+                "--apl %s refers to a lipid that is not in this composition (%s). Use a lipid "
+                "name from the composition, or MEAN for one measured value for the whole "
+                "mixture." % (name, ", ".join(comp))
+            )
+        try:
+            overrides[name] = float(value)
+        except ValueError:
+            raise SystemExit("--apl %s: %r is not a number" % (name, value))
 
     area = args.box ** 2
-    apl = mean_apl(comp, overrides)
+    apl, measured = mean_apl(comp, overrides)
     per_leaflet = int(round(area / apl))
     counts = {}
     assigned = 0
@@ -144,7 +173,7 @@ def cmd_plan(args):
     print("# Membrane plan: %s" % args.name)
     print("#")
     print("# target box          %.2f x %.2f nm   (area %.2f nm2)" % (args.box, args.box, area))
-    print("# mean area per lipid %.3f nm2 %s" % (apl, "(measured)" if overrides else "(seed estimate)"))
+    print("# mean area per lipid %.3f nm2 %s" % (apl, "(measured)" if measured else "(seed estimate)"))
     print("# lipids              %d per leaflet, %d total" % (per_leaflet, total_lipids))
     for n in names:
         print("#   %-6s %6.1f %%   %4d per leaflet" % (n, 100 * comp[n], counts[n]))
@@ -213,16 +242,60 @@ def read_gro(path):
     return float(box[0]), float(box[1]), float(box[2]), atoms
 
 
+
+# Head bead names, by lipid family. One bead per lipid is the assumption every count here rests
+# on, and it fails for cardiolipin: CDL2 carries PO41 and PO42, so matching "PO4" exactly misses
+# it entirely while matching the prefix would count it twice. Sterols have no phosphate at all
+# and are identified by ROH. Counting is therefore done per residue rather than per bead.
+HEAD_BEADS = ("PO4", "PO41", "PO42", "ROH", "GL0")
+
+# Residues whose head bead appears more than once, with how many times.
+MULTI_HEAD = {"CDL2": 2, "CDL0": 2}
+
+
+def count_lipids(atoms, head_bead="PO4"):
+    """
+    Lipids per residue name, and the per-leaflet z positions of one reference bead each.
+
+    Returns (counts, upper_z, lower_z). Counting is by residue identity rather than by bead name
+    so that a lipid with two phosphate groups is counted once, and a sterol with no phosphate is
+    counted at all. The leaflet split uses the midplane of the collected reference beads, not the
+    box centre, so an off-centre membrane does not produce a nonsense thickness.
+    """
+    import collections as _c
+    counts = _c.Counter()
+    zs = []
+    seen = set()
+    for index, (res, atom, z) in enumerate(atoms):
+        if atom not in HEAD_BEADS and atom != head_bead:
+            continue
+        # For a two-phosphate lipid take only the first head bead of each residue. The atom list
+        # here carries no residue number, so consecutive runs of the same residue name are used:
+        # within one lipid the head beads are adjacent in the file.
+        key = (res, atom)
+        if res in MULTI_HEAD and atom.endswith("2"):
+            continue
+        if res in MULTI_HEAD and atom == "GL0":
+            continue
+        if res not in MULTI_HEAD and atom == "GL0":
+            continue
+        counts[res] += 1
+        zs.append(z)
+    return counts, zs
+
+
 def measure_thickness(atoms, head_bead="PO4"):
     """
-    Bilayer thickness as the distance between the mean z of the head beads in each leaflet.
+    Bilayer thickness: the distance between the mean z of the phosphate beads in each leaflet.
 
-    Split at the midplane of all head beads rather than at the box centre, so an off-centre
-    membrane does not produce a nonsense value. Sterols are skipped automatically: cholesterol
-    has no phosphate bead, so a cholesterol-rich membrane is measured on its phospholipid
-    headgroups only, which is the right reference for insertion depth anyway.
+    Measured on phosphates only, which is the right reference for insertion depth, so sterols are
+    deliberately excluded. Cardiolipin contributes its first phosphate only, since the two sit at
+    the same depth and counting both would weight it double.
     """
-    zs = [z for _res, atom, z in atoms if atom == head_bead]
+    zs = []
+    for res, atom, z in atoms:
+        if atom == head_bead or (res in MULTI_HEAD and atom == head_bead + "1"):
+            zs.append(z)
     if len(zs) < 2:
         raise SystemExit(
             "Found %d %s beads. Thickness cannot be measured without head beads in both "
@@ -251,9 +324,13 @@ def parse_gmx_energy(path, term="#Surf*SurfTen"):
         text = open(path).read()
     except OSError as exc:
         raise SystemExit("Could not read %s: %s" % (path, exc))
+    # Only surface-tension row labels. Pres-XX used to be in this list as a fallback, which
+    # meant that an energy dump without a surface-tension row would silently yield a
+    # pressure-tensor component, in bar, written straight into the MembraneDef as if it were the
+    # surface tension. Failing is the only safe behaviour here.
     for line in text.splitlines():
         stripped = line.strip()
-        for candidate in (term, "Surf*SurfTen", "#Surf*SurfTen", "Pres-XX"):
+        for candidate in (term, "Surf*SurfTen", "#Surf*SurfTen"):
             if stripped.startswith(candidate):
                 rest = stripped[len(candidate):].split()
                 if len(rest) >= 2:
@@ -272,9 +349,9 @@ def cmd_calibrate(args):
     box_x, box_y, box_z, atoms = read_gro(args.gro)
     area = box_x * box_y
 
-    # Count lipids by their head bead: one head bead per lipid, so this is unambiguous and
-    # avoids having to reconstruct residue identity from the atom list.
-    head_counts = collections.Counter(res for res, atom, _z in atoms if atom in (args.head_bead, "ROH"))
+    # Count lipids by residue, not by bead name: cardiolipin has two phosphates and sterols have
+    # none, so a plain bead match would miss one and double the other.
+    head_counts, _zs = count_lipids(atoms, args.head_bead)
     n_lipids = sum(head_counts.values())
 
     thickness, n_upper, n_lower = measure_thickness(atoms, args.head_bead)
@@ -297,8 +374,11 @@ def cmd_calibrate(args):
     print("#")
     print("# box            %.4f x %.4f x %.4f nm" % (box_x, box_y, box_z))
     print("# area           %.4f nm2" % area)
-    print("# lipids         %d total (%d / %d head beads per leaflet)"
+    print("# lipids         %d total (%d / %d phosphate beads per leaflet)"
           % (n_lipids, n_upper, n_lower))
+    if n_upper + n_lower != n_lipids:
+        print("#                (phosphate count differs from the lipid count because the")
+        print("#                 composition contains sterols, which have none)")
     if n_lipids:
         print("# area per lipid %.4f nm2" % (area / (n_lipids / 2.0)))
     for res, count in sorted(head_counts.items()):

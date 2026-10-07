@@ -32,7 +32,7 @@ AMP_GMX_BINARY="gmx"                    # 'gmx_mpi' for most source builds with 
 # Safe to source more than once. Without this, repeated sourcing stacks duplicate PATH entries
 # and re-runs module purge, which drops modules you loaded deliberately in between.
 if [ -n "${AMP_ENV_LOADED:-}" ]; then
-    echo "amp-env: already loaded (GMX=${GMX}, AMP_NP=${AMP_NP}, OMP_NUM_THREADS=${OMP_NUM_THREADS})"
+    echo "amp-env: already loaded (GMX=${GMX:-unset}, AMP_NP=${AMP_NP:-unset}, OMP_NUM_THREADS=${OMP_NUM_THREADS:-unset})"
     echo "amp-env: open a new shell to start from a clean environment"
     return 0 2>/dev/null || exit 0
 fi
@@ -67,6 +67,15 @@ fi
 # Pin the build. Taken from the binary itself rather than from the module name, so the two
 # cannot drift apart: a module named 2024.3 that provides something else would otherwise pass.
 AMP_GMX_VERSION="$("$GMX" --version 2>/dev/null | sed -n 's/^GROMACS version:[[:space:]]*//p' | head -1)"
+if [ -z "$AMP_GMX_VERSION" ]; then
+    # An empty value would be exported as an empty GMX_VERSION_EXPECT, which provenance.py
+    # treats as "no pin requested". The summary would then print "pinned as " and every version
+    # would pass, which is the opposite of what loading this file was meant to guarantee.
+    echo "amp-env: could not read a version from '$GMX --version'." >&2
+    echo "amp-env: the build pin would be silently inactive, so stopping here." >&2
+    echo "amp-env: run '$GMX --version' yourself to see what it prints." >&2
+    return 1 2>/dev/null || exit 1
+fi
 export GMX_VERSION_EXPECT="${AMP_GMX_VERSION%%-*}"
 
 # Python environment. venv and micromamba are both handled; edit if you use something else.

@@ -30,9 +30,16 @@ def _run(command, timeout=30):
         result = subprocess.run(command, shell=True, capture_output=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return None
-    if result.returncode != 0 and not result.stdout:
+    if result.returncode != 0:
+        # A non-zero exit means the command did not do what was asked, whatever it printed. The
+        # earlier version accepted any stdout, so a wrapper printing usage text and exiting 1
+        # was parsed as a banner, found no version line, and recorded "UNKNOWN" for the whole
+        # campaign with nothing to indicate the probe had failed.
         return None
-    return (result.stdout or b"").decode("utf-8", errors="replace")
+    # Several martinize2 releases write the version to stderr rather than stdout.
+    out = (result.stdout or b"").decode("utf-8", errors="replace")
+    err = (result.stderr or b"").decode("utf-8", errors="replace")
+    return out + ("\n" + err if err.strip() else "")
 
 
 def gmx_version(binary=None):
@@ -55,9 +62,18 @@ def gmx_version(binary=None):
             version = m.group(1).strip()
             break
 
-    keep = ("GROMACS version", "Precision", "SIMD instructions", "GPU support",
-            "C compiler:", "Build OS/arch", "Build CPU brand")
-    banner = [l.strip() for l in out.splitlines() if any(k in l for k in keep)]
+    # Everything with a "key: value" shape, rather than a whitelist. The CUDA driver and
+    # runtime versions and the FFT library all change what this pipeline measures, and the
+    # earlier whitelist dropped exactly those.
+    skip = ("Executable", "Data prefix", "Working dir", "Command line", "GROMACS is written by")
+    banner = []
+    for line in out.splitlines():
+        stripped = line.strip()
+        if not stripped or ":" not in stripped:
+            continue
+        if any(stripped.startswith(k) for k in skip):
+            continue
+        banner.append(stripped)
     return version, banner
 
 

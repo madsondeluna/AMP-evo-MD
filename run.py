@@ -14,7 +14,6 @@ Adapted from the Evo-MD run script of van Hilten et al. 2023. Differences from u
 
 import sys
 import os
-import subprocess
 
 if not sys.version_info[0] == 3:
     sys.exit("Script requires Python 3.")
@@ -216,7 +215,6 @@ def main():
     g.iterations                = 100
     g.N_parents                 = 36
     g.ptr_selection_function    = GA.SelectionMethods.best_N
-    g.selfun_exponential_rank_C = 0.5
     g.N_elites                  = 1
     g.N_rerun_elites            = 1
     g.N_rerun_threshold         = 4
@@ -228,7 +226,10 @@ def main():
     g.initialize(path_restart_file=CoreSettings.filepath_checkpoint)
     g.run()
     result = g.get_result()
-    print(result[0][0] + "\t" + str(result[0][1]))
+    # get_result yields (sequence, [fitness, raw]); the second element is a list, not a scalar.
+    best_sequence, best_scores = result[0][0], result[0][1]
+    print("best\t%s\tfitness=%s\traw=%s"
+          % (best_sequence, best_scores[0], best_scores[1] if len(best_scores) > 1 else ""))
 
 
 if __name__ == "__main__":
@@ -238,10 +239,17 @@ if __name__ == "__main__":
     # 1: fixed sequence list, no GA (calibration set); see also calibrate.py
     STATE = 0
 
+    # WRITE_XTC does not control whether the trajectory is written: production.py always calls
+    # MDRUN_XTC, so the .xtc always exists in the simulation's temp directory, which is where the
+    # insertion-depth analysis reads it from. The flag only decides whether that file is copied
+    # into the output directory and kept. So it is purely a disk-space question, and neither
+    # stage needs a particular value of it to work.
     if STATE == 0:
         if UserSettings.WRITE_XTC:
-            mprint("Warning. UserSettings.WRITE_XTC set to True. This will result in a very "
-                   "large amount of data on disk.")
+            mprint("Refusing to start: WRITE_XTC is True, which keeps a trajectory for every "
+                   "candidate. A campaign of thousands of evaluations will fill the disk. Set "
+                   "WRITE_XTC = False in user/usersettings.py; the analysis does not need the "
+                   "kept copies.")
             sys.exit(1)
         main()
 
@@ -249,9 +257,9 @@ if __name__ == "__main__":
         mprint("Running fixed sequence list (no GA).")
         Provenance.check_expected()
         if not UserSettings.WRITE_XTC:
-            mprint("ERROR: WRITE_XTC must be True to compute insertion depth; the distance "
-                   "analysis reads the trajectory.")
-            sys.exit(1)
+            mprint("Note: WRITE_XTC is False, so trajectories will not be kept after each run. "
+                   "The observables are still computed from them; set it True only if you want "
+                   "to inspect the calibration trajectories afterwards.")
         with open("seq.txt") as handle:
             sequences = [line.strip() for line in handle if line.strip()]
         _run_specific_sequences(sequences)

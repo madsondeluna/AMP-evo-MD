@@ -95,7 +95,19 @@ def fitness_from_observables(observables):
         factor = 1.0
 
     components["orientation_factor"] = factor
-    fitness = factor * raw
+
+    # The orientation factor is applied only to a positive raw score, restoring a guard the
+    # upstream code had and this rewrite had dropped. Multiplying a negative raw score by a
+    # factor in [0, 1] moves it toward zero, which on a maximised fitness makes it BETTER: a
+    # peptide that had left the membrane entirely (factor 0) would score 0 and outrank every
+    # attached peptide that merely performed badly. The optimiser would then be actively
+    # rewarded for producing peptides that detach, and nothing in the fitness trace would show
+    # it. A candidate whose raw score is already negative is already being rejected on the
+    # merits, so the orientation penalty has nothing to add.
+    if raw > 0:
+        fitness = factor * raw
+    else:
+        fitness = raw
     components["raw"] = raw
     components["fitness"] = fitness
 

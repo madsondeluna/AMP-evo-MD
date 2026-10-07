@@ -111,8 +111,8 @@ def plan(reserve=1, threads_per_rank=2, use_logical=False, budget=None):
         available = min(physical, logical)
         basis = "physical cores"
 
-    if quota is not None:
-        available = min(available, quota)
+    if quota is not None and quota < available:
+        available = quota
         basis += ", capped by cgroup quota"
 
     usable = max(1, available - reserve)

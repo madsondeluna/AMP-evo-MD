@@ -150,8 +150,13 @@ def read_xvg(path):
                 continue
     if not rows:
         raise ValueError("no numeric rows in %s" % path)
-    width = min(len(r) for r in rows)
-    data = np.array([r[:width] for r in rows])
+    # Use the most common row width and drop rows that do not match, rather than truncating every
+    # column to the shortest row. Reading an .xvg while gmx is still flushing leaves a final
+    # partial line, and taking its width would silently reduce the file to a single column: the
+    # caller would then see no series at all and report a result with checks quietly missing.
+    widths = collections.Counter(len(r) for r in rows)
+    width = widths.most_common(1)[0][0]
+    data = np.array([r[:width] for r in rows if len(r) >= width])
     x = data[:, 0]
     series = collections.OrderedDict()
     for i in range(1, width):

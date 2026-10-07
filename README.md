@@ -183,26 +183,53 @@ The lines to read are `GROMACS version` (anything from 2021 onward works) and `G
 since CUDA support cuts the per-candidate cost substantially. If the binary is `gmx_mpi`, set
 `export GMX=gmx_mpi` later; the pipeline reads that variable rather than assuming a name.
 
-**Put the module loads in a file, not in `.bashrc`.** A campaign that silently picks up a
-different GROMACS build partway through is not reproducible, and the difference will not show up
-anywhere in the output:
+**Put the module loads in a file, and source that file, rather than putting them in
+`.bashrc`.** A ready-made one ships with the repository:
 
 ```bash
-cat > ~/amp-env.sh <<'EOF'
-module purge
-module load gromacs/2024.3     # exact version, not a bare 'gromacs'
-export GMX=gmx                 # or gmx_mpi
-export GMX_VERSION_EXPECT=2024.3
-
-# Ranks and threads sized to this machine, leaving one core free.
-eval "$(python3 "$HOME/AMP-evo-MD/tools/cores.py" --export)"
-EOF
+cp ~/AMP-evo-MD/tools/amp-env.sh.example ~/amp-env.sh
+nano ~/amp-env.sh          # edit the three marked lines at the top
 ```
 
-That `eval` sets `AMP_NP` and `OMP_NUM_THREADS`. Run `python3 tools/cores.py` without
-`--export` to see what it chose and why.
+The three lines are the clone path, the exact GROMACS module name, and the binary name (`gmx` or
+`gmx_mpi`). Everything else is handled: it checks the module actually loaded, confirms the binary
+is on `PATH`, reads the version from the binary itself rather than trusting the module name,
+activates the virtual environment, and sizes the MPI ranks and threads for the machine.
 
-Source it before every run: `source ~/amp-env.sh`.
+Load it before working, in every new shell:
+
+```bash
+source ~/amp-env.sh
+```
+
+It prints what it set, so you can see at a glance which environment a terminal is in:
+
+```
+amp-env loaded
+  root              /home/madson/AMP-evo-MD
+  gmx               /opt/gromacs/2024.3/bin/gmx
+  gmx version       2024.3  (pinned as 2024.3)
+  python            /home/madson/AMP-evo-MD/.venv/bin/python3
+  MPI ranks         15
+  threads per rank  2
+```
+
+**Do not put the contents in `~/.bashrc`.** It runs in every shell you open on that machine:
+`module purge` would drop the modules of any other work you have loaded, activating the
+virtualenv would make every `python` on the machine this project's python, and the core detection
+would spawn a subprocess on every shell start, which on a networked filesystem is slow enough to
+notice over ssh. The failure mode is worse than the cost: if the site's module default changes,
+`tmux` sessions opened before the change keep the old environment while new ones get the new one,
+and you end up with half a campaign from each build. Loading the environment should be deliberate
+and visible in the shell you did it in.
+
+For convenience, put only an alias in `~/.bashrc`:
+
+```bash
+echo "alias ampenv='source ~/amp-env.sh'" >> ~/.bashrc
+```
+
+Then `ampenv` loads it and the rest of the machine stays untouched.
 
 `GMX_VERSION_EXPECT` pins the build. Every entry point checks the running GROMACS against it and
 stops with a clear message on a mismatch, rather than producing numbers that silently do not
@@ -339,20 +366,9 @@ working.
 
 A complete `~/amp-env.sh` for a machine with modules and no root:
 
-```bash
-module purge
-module load gromacs                 # the exact module name for this machine
-
-export GMX=gmx                      # or gmx_mpi, whichever 'which' found
-export GMX_VERSION_EXPECT=2024.3    # stop if a different build gets loaded
-export MARTINIZE2=martinize2
-export PATH="$HOME/bin:$PATH"       # for insane
-
-source "$HOME/AMP-evo-MD/.venv/bin/activate"
-eval "$(python3 "$HOME/AMP-evo-MD/tools/cores.py" --export)"
-```
-
-Source it before every run, rather than relying on `.bashrc`.
+`tools/amp-env.sh.example` sets all of these. Copy it to `~/amp-env.sh`, edit the three marked
+lines, and `source ~/amp-env.sh` at the start of every session. It also exports `AMP_NP`, the
+rank count the commands below use.
 
 ### Provenance: what actually ran
 
@@ -375,6 +391,24 @@ python -c "import json; print(json.load(open('campaign_damage/KWLRK.../observabl
 
 ## Running it
 
+### Step 0: load the environment, every session
+
+Every command in the steps below assumes this has been run in the current shell:
+
+```bash
+source ~/amp-env.sh
+cd ~/AMP-evo-MD
+```
+
+It is not optional and it does not persist. A new terminal, a new `tmux` window, or a reconnected
+ssh session each need it again, because the modules, the virtualenv and the rank sizing live in
+the shell and not on disk. The script prints what it set, so one look tells you whether a
+terminal is ready.
+
+Skipping it is the single most common way to get a confusing failure: `gmx: command not found`,
+a `martinize2` from the wrong Python, or a campaign that runs on the site's default GROMACS
+rather than the pinned one.
+
 ### Step 1: prepare and calibrate the membranes
 
 Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMembrane` on any
@@ -382,9 +416,6 @@ entry point while the reference values are missing, which is deliberate: a plaus
 would propagate into every fitness value in the campaign while looking entirely reasonable.
 
 ```bash
-source ~/amp-env.sh
-cd ~/AMP-evo-MD
-
 # First pass. Prints the plan and the insane command, then stops.
 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
 ```
@@ -470,7 +501,6 @@ trajectories for thousands of candidates fills a disk quickly.
 With MPI, using the layout `amp-env.sh` computed:
 
 ```bash
-source ~/amp-env.sh
 mpirun -np $AMP_NP python run.py --output_dir calibration_run
 ```
 
@@ -551,9 +581,13 @@ reattach and watch, rather than `nohup`, which does not:
 
 ```bash
 tmux new -s campaign
-# inside tmux:
+
+# tmux opens a fresh shell, so the environment has to be loaded again inside it.
+# This is where forgetting step 0 costs the most: the campaign starts on the site
+# default GROMACS and the mismatch only surfaces days later, if at all.
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
+
 mpirun -np $AMP_NP python run.py --output_dir campaign_damage   # drop mpirun if no MPI
 # detach with Ctrl-b then d
 ```
@@ -804,6 +838,8 @@ tools/
   membrane_analysis.py       equilibration verdict and cross-membrane comparison
   ga_report.py               campaign performance, diversity and composition
   mdtools.py                 shared parsing, statistics and plot style
+  amp-env.sh.example         environment template; copy to ~/amp-env.sh and edit
+  cores.py                   size MPI ranks and threads for this machine
 docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
 calibrate.py                 score existing results, check against known classes
@@ -815,6 +851,7 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
 
 | Task | Command |
 |---|---|
+| Load the environment, every new shell | `source ~/amp-env.sh` |
 | Size ranks and threads for this machine | `python tools/cores.py` |
 | Prepare a membrane | `./tools/protocol.sh <name> "<composition>" <role>` |
 | Check a membrane is usable | `python tools/membrane_analysis.py single --name X --dir prep/X` |

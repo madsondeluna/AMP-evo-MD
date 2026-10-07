@@ -1,0 +1,99 @@
+# Environment for AMP-evo-MD. Copy to ~/amp-env.sh, edit the marked lines, and source it
+# before working:
+#
+#     source ~/amp-env.sh
+#
+# Do NOT put the contents of this file in ~/.bashrc. It runs in every shell you open on the
+# machine: 'module purge' would drop the modules of any other work you have loaded, activating
+# the virtualenv would make every python on the machine this project's python, and the core
+# detection would spawn a subprocess on every shell start, which on a networked filesystem is
+# slow enough to notice over ssh.
+#
+# The failure mode is worse than the cost. If the site's module default changes, tmux sessions
+# opened before the change keep the old environment while new ones get the new one, and you end
+# up with half a campaign from each build. Loading the environment should be something you did
+# on purpose, visible in the shell you did it in.
+#
+# For convenience, put only this in ~/.bashrc:
+#
+#     alias ampenv='source ~/amp-env.sh'
+
+# ---------------------------------------------------------------------------
+# Edit these three lines for your machine
+# ---------------------------------------------------------------------------
+AMP_ROOT="$HOME/AMP-evo-MD"
+AMP_GROMACS_MODULE="gromacs/2024.3"     # exact name from 'module avail', never a bare 'gromacs'
+AMP_GMX_BINARY="gmx"                    # 'gmx_mpi' for most source builds with MPI
+
+# ---------------------------------------------------------------------------
+# Nothing below needs editing
+# ---------------------------------------------------------------------------
+
+# Safe to source more than once. Without this, repeated sourcing stacks duplicate PATH entries
+# and re-runs module purge, which drops modules you loaded deliberately in between.
+if [ -n "${AMP_ENV_LOADED:-}" ]; then
+    echo "amp-env: already loaded (GMX=${GMX}, AMP_NP=${AMP_NP}, OMP_NUM_THREADS=${OMP_NUM_THREADS})"
+    echo "amp-env: open a new shell to start from a clean environment"
+    return 0 2>/dev/null || exit 0
+fi
+
+if [ ! -d "$AMP_ROOT" ]; then
+    echo "amp-env: AMP_ROOT does not exist: $AMP_ROOT" >&2
+    return 1 2>/dev/null || exit 1
+fi
+
+# Modules, when the machine uses them. 'module' is a shell function, so test for it that way
+# rather than with 'which'.
+if type module >/dev/null 2>&1; then
+    module purge
+    if ! module load "$AMP_GROMACS_MODULE" 2>/dev/null; then
+        echo "amp-env: could not load module '$AMP_GROMACS_MODULE'" >&2
+        echo "amp-env: available GROMACS modules:" >&2
+        module avail 2>&1 | grep -i gromacs >&2 || echo "  (none found)" >&2
+        return 1 2>/dev/null || exit 1
+    fi
+fi
+
+export GMX="$AMP_GMX_BINARY"
+export MARTINIZE2="${MARTINIZE2:-martinize2}"
+export PATH="$HOME/bin:$PATH"           # insane lives here
+
+if ! command -v "$GMX" >/dev/null 2>&1; then
+    echo "amp-env: '$GMX' not on PATH after loading the module." >&2
+    echo "amp-env: try 'which gmx gmx_mpi' and set AMP_GMX_BINARY accordingly." >&2
+    return 1 2>/dev/null || exit 1
+fi
+
+# Pin the build. Taken from the binary itself rather than from the module name, so the two
+# cannot drift apart: a module named 2024.3 that provides something else would otherwise pass.
+AMP_GMX_VERSION="$("$GMX" --version 2>/dev/null | sed -n 's/^GROMACS version:[[:space:]]*//p' | head -1)"
+export GMX_VERSION_EXPECT="${AMP_GMX_VERSION%%-*}"
+
+# Python environment. venv and micromamba are both handled; edit if you use something else.
+if [ -f "$AMP_ROOT/.venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    . "$AMP_ROOT/.venv/bin/activate"
+elif command -v micromamba >/dev/null 2>&1; then
+    eval "$(micromamba shell hook -s bash)"
+    micromamba activate amp
+else
+    echo "amp-env: no .venv and no micromamba; using whatever python3 is on PATH" >&2
+fi
+
+# Ranks and threads sized to this machine, one core left free.
+if [ -f "$AMP_ROOT/tools/cores.py" ]; then
+    eval "$(python3 "$AMP_ROOT/tools/cores.py" --export 2>/dev/null)"
+fi
+export AMP_NP OMP_NUM_THREADS
+
+export AMP_ENV_LOADED=1
+
+cat <<SUMMARY
+amp-env loaded
+  root              $AMP_ROOT
+  gmx               $(command -v "$GMX")
+  gmx version       ${AMP_GMX_VERSION:-UNKNOWN}  (pinned as $GMX_VERSION_EXPECT)
+  python            $(command -v python3)
+  MPI ranks         ${AMP_NP:-unset}
+  threads per rank  ${OMP_NUM_THREADS:-unset}
+SUMMARY

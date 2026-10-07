@@ -170,3 +170,39 @@ class TestRegistryRoles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestMetadataTolerance(unittest.TestCase):
+    """
+    Metadata keys in observables.json must not reach the objectives as membranes.
+
+    compute_observables writes provenance alongside the per-membrane entries. Before the
+    filtering helper existed, both objectives iterated over every key to find the minimum
+    orientation factor, so a metadata entry would raise KeyError or, worse, contribute a
+    meaningless value. This is the kind of break that only shows up against real output.
+    """
+
+    def setUp(self):
+        UserSettings.APPLY_orientation_factor = True
+        UserSettings.BINDING_proxy = "interaction_energy"
+
+    def _with_metadata(self):
+        obs = observables(2.0, 0.3)
+        obs["_provenance"] = {"gmx_version": "2024.3", "modules": ["gromacs/2024.3"]}
+        return obs
+
+    def test_damage_ignores_metadata(self):
+        plain, _ = fitness_damage.fitness_from_observables(observables(2.0, 0.3))
+        tagged, _ = fitness_damage.fitness_from_observables(self._with_metadata())
+        self.assertAlmostEqual(plain, tagged)
+
+    def test_binding_ignores_metadata(self):
+        plain, _ = fitness_binding.fitness_from_observables(observables(2.0, 0.3))
+        tagged, _ = fitness_binding.fitness_from_observables(self._with_metadata())
+        self.assertAlmostEqual(plain, tagged)
+
+    def test_dispatch_ignores_metadata(self):
+        for objective in ("damage", "binding"):
+            plain, _ = score_observables(observables(2.0, 0.3), objective=objective)
+            tagged, _ = score_observables(self._with_metadata(), objective=objective)
+            self.assertAlmostEqual(plain, tagged, msg="objective=%s" % objective)

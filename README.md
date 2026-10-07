@@ -167,13 +167,17 @@ module avail 2>&1 | grep -i -E "gromacs|gmx"
 module avail 2>&1 | grep -i -E "openmpi|mpich|mpi|python"
 ```
 
-Load GROMACS, and note whether it brings MPI with it:
+Load GROMACS **with an explicit version**, and note whether it brings MPI with it:
 
 ```bash
-module load gromacs            # use the exact name 'module avail' printed
+module load gromacs/2024.3     # the exact name and version 'module avail' printed
 which gmx gmx_mpi
 gmx --version | head -20       # or gmx_mpi --version
 ```
+
+Name the version. A bare `module load gromacs` resolves to whatever the site has set as the
+default, and administrators change that default without announcing it. Intending to use one
+version is not the same as having used one, which is what the pinning below makes checkable.
 
 The lines to read are `GROMACS version` (anything from 2021 onward works) and `GPU support`,
 since CUDA support cuts the per-candidate cost substantially. If the binary is `gmx_mpi`, set
@@ -186,13 +190,20 @@ anywhere in the output:
 ```bash
 cat > ~/amp-env.sh <<'EOF'
 module purge
-module load gromacs            # the exact module name for this machine
+module load gromacs/2024.3     # exact version, not a bare 'gromacs'
 export GMX=gmx                 # or gmx_mpi
+export GMX_VERSION_EXPECT=2024.3
 export OMP_NUM_THREADS=4
 EOF
 ```
 
 Source it before every run: `source ~/amp-env.sh`.
+
+`GMX_VERSION_EXPECT` pins the build. Every entry point checks the running GROMACS against it and
+stops with a clear message on a mismatch, rather than producing numbers that silently do not
+belong with the rest of the campaign. Matching is a prefix test, so `2024` accepts any 2024.x
+and `2024.3` does not accept `2024.4`. Leave it unset and the version is recorded but not
+enforced.
 
 **If `python3 -m venv` is unavailable.** Some minimal installs ship Python without `venv`. Check
 first, since this is usually a non-problem:
@@ -317,6 +328,7 @@ working.
 | Variable | Purpose | Default |
 |---|---|---|
 | `GMX` | GROMACS binary name | `gmx` |
+| `GMX_VERSION_EXPECT` | pin the GROMACS version; runs stop on a mismatch | unset, version recorded but not enforced |
 | `MARTINIZE2` | martinize2 binary | `martinize2` |
 | `OMP_NUM_THREADS` | threads per GROMACS process | set it explicitly, see below |
 
@@ -327,6 +339,7 @@ module purge
 module load gromacs                 # the exact module name for this machine
 
 export GMX=gmx                      # or gmx_mpi, whichever 'which' found
+export GMX_VERSION_EXPECT=2024.3    # stop if a different build gets loaded
 export MARTINIZE2=martinize2
 export OMP_NUM_THREADS=4
 export PATH="$HOME/bin:$PATH"       # for insane
@@ -334,9 +347,26 @@ export PATH="$HOME/bin:$PATH"       # for insane
 source "$HOME/AMP-evo-MD/.venv/bin/activate"
 ```
 
-Source it before every run, rather than relying on `.bashrc`. A campaign that silently picks up
-a different GROMACS build partway through is not reproducible, and the difference will not be
-visible anywhere in the output.
+Source it before every run, rather than relying on `.bashrc`.
+
+### Provenance: what actually ran
+
+Every campaign records the GROMACS version and banner, the martinize2 and Python package
+versions, and the loaded module list in the header of its progress file. Every candidate records
+the GROMACS version in its own `observables.json`, so a single result is self-describing and a
+later re-score does not depend on trusting a note about which build was loaded.
+
+`calibrate.py` warns when a set of results was produced by more than one build and reports how
+many candidates came from each. This matters because surface tension is sensitive to the build:
+a version change shifts the values in a way that looks exactly like a real effect of the
+sequences, and nothing else in the output would reveal it.
+
+Check what a finished run used:
+
+```bash
+head -40 campaign_damage/output.txt                     # the campaign header
+python -c "import json; print(json.load(open('campaign_damage/KWLRK.../observables.json'))['_provenance'])"
+```
 
 ## Running it
 

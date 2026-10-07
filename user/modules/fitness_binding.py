@@ -93,6 +93,16 @@ def _z(value, mean, std):
     return (value - mean) / std
 
 
+def membrane_entries(observables):
+    """
+    The membrane measurements in an observables dict, excluding metadata.
+
+    compute_observables stores provenance under a leading-underscore key alongside the per
+    membrane entries. Filtering by prefix keeps the objectives working when further metadata is
+    added later, which iterating over every key would not.
+    """
+    return {k: v for k, v in observables.items() if not k.startswith("_")}
+
 def fitness_from_observables(observables, population_stats=None):
     """
     Scalarise the observables dict into (fitness, components).
@@ -130,7 +140,7 @@ def fitness_from_observables(observables, population_stats=None):
         components["selectivity"] = affinity_target - affinity_host
 
     if UserSettings.APPLY_orientation_factor:
-        factor = min(observables[name]["orientation"] for name in observables)
+        factor = min(entry["orientation"] for entry in membrane_entries(observables).values())
     else:
         factor = 1.0
 

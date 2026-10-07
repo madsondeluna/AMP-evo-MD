@@ -127,6 +127,7 @@ def main():
             "fitness": fitness,
             "components": components,
             "class": labels.get(sequence.upper()),
+            "gmx_version": observables.get("_provenance", {}).get("gmx_version"),
         })
 
     if failures:
@@ -142,8 +143,22 @@ def main():
 
     rows.sort(key=lambda r: r["fitness"], reverse=True)
 
+    # A set of results produced by more than one GROMACS build is not internally comparable,
+    # and the shift it introduces looks exactly like a real effect of the sequences.
+    builds = {r["gmx_version"] for r in rows if r["gmx_version"]}
+    if len(builds) > 1:
+        print("WARNING: these results were produced by more than one GROMACS build:")
+        for b in sorted(builds):
+            n = sum(1 for r in rows if r["gmx_version"] == b)
+            print("  %-28s %d candidate(s)" % (b, n))
+        print("  Surface tension is build-sensitive, so the values are not directly")
+        print("  comparable across them. Re-run the minority set under the pinned build.")
+        print()
+
     objective = args.objective or UserSettings.OBJECTIVE
     print("objective = %s" % objective)
+    if builds:
+        print("gmx       = %s" % ", ".join(sorted(builds)))
     if objective == "binding":
         print("proxy     = %s" % UserSettings.BINDING_proxy)
     print("n         = %d" % len(rows))

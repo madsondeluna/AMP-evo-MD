@@ -43,12 +43,18 @@ import core.settings as CoreSettings
 import core.system as System
 import core.gromacs as Gromacs
 import core.gromacs_commands
+import core.provenance as Provenance
 
 import user.usersettings as UserSettings
 import user.membranes as Membranes
 
 
 OBSERVABLES_FILENAME = "observables.json"
+
+# Captured once per process rather than per candidate: running `gmx --version` for every
+# evaluation would add a subprocess call to a loop that runs thousands of times, and the
+# environment cannot change within a process.
+_PROVENANCE = Provenance.capture()
 
 
 def orientation_factor(d_mem, b):
@@ -221,6 +227,16 @@ def module_compute_observables(simulation):
     # on every sequence, including the ones the active objective ignored. Keeping the
     # discarded observables is the cheapest thing in the pipeline and the hardest to recover
     # later.
+    # Provenance travels with the measurements, not only in the campaign header, so a single
+    # observables file is self-describing: re-scoring one later, or comparing two candidates
+    # from different sessions, does not require trusting a note about which build was loaded.
+    results["_provenance"] = {
+        "gmx_version": _PROVENANCE.get("gmx_version"),
+        "gmx_binary": _PROVENANCE.get("gmx_binary"),
+        "martinize2": _PROVENANCE.get("martinize2_version"),
+        "modules": _PROVENANCE.get("modules"),
+    }
+
     out_path = os.path.join(simulation._temp_dir, OBSERVABLES_FILENAME)
     with open(out_path, "w") as handle:
         json.dump(results, handle, indent=2, sort_keys=True)

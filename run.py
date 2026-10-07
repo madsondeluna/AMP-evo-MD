@@ -23,6 +23,7 @@ import core.settings            as CoreSettings
 import core.simulation          as Sim
 import core.system              as System
 import core.genetic_algorithm   as GA
+import core.provenance          as Provenance
 
 import user.usersettings        as UserSettings
 import user.membranes           as Membranes
@@ -199,8 +200,16 @@ def main():
     # here costs a second; catching it after a campaign costs the campaign.
     Membranes.require_all_calibrated()
 
+    # Record which GROMACS actually produced this campaign, and stop now if it is not the pinned
+    # one. A campaign spanning several sessions can otherwise be produced by more than one build
+    # without leaving any trace in the output.
+    provenance = Provenance.capture()
+    Provenance.check_expected(provenance)
+
     g = GA.GeneticAlgorithm()
     g.description = "AMP design run, objective=%s" % UserSettings.OBJECTIVE
+    for key, value in Provenance.format_block(provenance):
+        g.additional_output[key] = value
 
     g.ptr_scoring_function      = _compute_fitness_simulation
     g.population_size           = 144
@@ -238,6 +247,7 @@ if __name__ == "__main__":
 
     elif STATE == 1:
         mprint("Running fixed sequence list (no GA).")
+        Provenance.check_expected()
         if not UserSettings.WRITE_XTC:
             mprint("ERROR: WRITE_XTC must be True to compute insertion depth; the distance "
                    "analysis reads the trajectory.")

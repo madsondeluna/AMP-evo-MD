@@ -35,6 +35,16 @@ import user.usersettings as UserSettings
 import user.membranes as Membranes
 
 
+def membrane_entries(observables):
+    """
+    The membrane measurements in an observables dict, excluding metadata.
+
+    compute_observables stores provenance under a leading-underscore key alongside the per
+    membrane entries. Filtering by prefix keeps the objectives working when further metadata is
+    added later, which iterating over every key would not.
+    """
+    return {k: v for k, v in observables.items() if not k.startswith("_")}
+
 def fitness_from_observables(observables):
     """
     Scalarise the observables dict into (fitness, components).
@@ -80,7 +90,7 @@ def fitness_from_observables(observables):
     # that has left the surface of any of the systems is not measuring what this objective
     # means to measure, even if it behaves on the other.
     if UserSettings.APPLY_orientation_factor:
-        factor = min(observables[name]["orientation"] for name in observables)
+        factor = min(entry["orientation"] for entry in membrane_entries(observables).values())
     else:
         factor = 1.0
 

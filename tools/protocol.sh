@@ -62,6 +62,11 @@ python3 "${HERE}/tools/membrane.py" plan \
     | tee plan_pass1.txt
 
 echo
+if [ "${PASS:-1}" = "2" ]; then
+    echo "(PASS=2: the plan above is informational. Production uses the system already in"
+    echo " ${DIR}/equil.gro, which you rebuilt from plan_pass2.txt.)"
+    echo
+fi
 echo "The plan above contains the insane command for this composition. Run it, or let this"
 echo "script run the commands it printed if you have reviewed them. Stopping here on the first"
 echo "pass is deliberate: lipid naming and the insane flags differ between Martini lipid sets,"
@@ -142,16 +147,26 @@ say "5/7  measure the equilibrium area per lipid and re-plan"
 # ---------------------------------------------------------------------------
 printf 'Box-X\nBox-Y\n\n' | "${GMX}" energy -f equil.edr -o equil_box.xvg -b $((EQUIL_NS/2))000
 MEAN_APL=$(python3 - <<PY
-import sys, os
+import sys
 sys.path.insert(0, "${HERE}/tools")
-import mdtools, collections
-t, s, _ = mdtools.read_xvg("equil_box.xvg")
-bx = next(v for k, v in s.items() if k.strip().startswith("Box-X"))
-by = next(v for k, v in s.items() if k.strip().startswith("Box-Y"))
+import mdtools
+import membrane
+
+t, series, _ = mdtools.read_xvg("equil_box.xvg")
+bx = next(v for k, v in series.items() if k.strip().startswith("Box-X"))
+by = next(v for k, v in series.items() if k.strip().startswith("Box-Y"))
 area = (bx * by).mean()
+
 _x, _y, _z, atoms = mdtools.read_gro("equil.gro")
-heads = sum(1 for r, a, *_ in atoms if a in ("PO4", "ROH"))
-print("%.4f" % (area / (heads / 2.0)))
+# Reuse membrane.count_lipids rather than matching bead names here. An inline copy is how this
+# diverged before: it matched PO4 and ROH only, which misses cardiolipin entirely (its beads are
+# PO41 and PO42), so the measured value driving the whole pass-2 correction was wrong by about
+# 11 percent for the shipped bacterial mixture.
+counts, _zs = membrane.count_lipids([(r, a, z) for r, a, _px, _py, z in atoms])
+n_lipids = sum(counts.values())
+if n_lipids == 0:
+    sys.exit("no lipids found in equil.gro; check the head bead names")
+print("%.4f" % (area / (n_lipids / 2.0)))
 PY
 )
 echo "measured mean area per lipid: ${MEAN_APL} nm2"

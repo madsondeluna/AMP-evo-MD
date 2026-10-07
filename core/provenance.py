@@ -62,16 +62,25 @@ def gmx_version(binary=None):
             version = m.group(1).strip()
             break
 
-    # Everything with a "key: value" shape, rather than a whitelist. The CUDA driver and
-    # runtime versions and the FFT library all change what this pipeline measures, and the
-    # earlier whitelist dropped exactly those.
-    skip = ("Executable", "Data prefix", "Working dir", "Command line", "GROMACS is written by")
+    # Everything with a "key: value" shape, rather than a whitelist, so that the CUDA driver and
+    # runtime versions and the FFT library are recorded: all of them change what this pipeline
+    # measures, and an earlier whitelist dropped exactly those.
+    #
+    # The skip list is not cosmetic. The banner exists so that a build change can be spotted by
+    # comparing progress-file headers across sessions, and anything that varies between runs of
+    # the SAME build defeats that. GROMACS prints a random quotation on every invocation, and the
+    # paths below differ by where the run happened rather than by what was run.
+    skip = ("Executable", "Data prefix", "Working dir", "Command line",
+            "GROMACS is written by", "GROMACS reminds you")
     banner = []
     for line in out.splitlines():
         stripped = line.strip()
         if not stripped or ":" not in stripped:
             continue
         if any(stripped.startswith(k) for k in skip):
+            continue
+        # The ":-)" in the GROMACS header art contains a colon but is not a key/value line.
+        if stripped.startswith(":-)") or ":-)" in stripped:
             continue
         banner.append(stripped)
     return version, banner

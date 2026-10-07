@@ -38,6 +38,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mdtools
+import membrane
 
 
 # gmx energy writes these with its own labels; match loosely so a different gmx version that
@@ -97,21 +98,30 @@ def analyse_one(name, directory, equil_fraction=0.5):
     gro = os.path.join(directory, "%s_eq.gro" % name)
     if os.path.exists(gro):
         bx, by, bz, atoms = mdtools.read_gro(gro)
-        heads = [(res, z) for res, atom, _x, _y, z in atoms if atom == "PO4"]
         result["box"] = {"x": bx, "y": by, "z": bz}
-        if heads:
-            zs = np.array([z for _res, z in heads])
-            mid = zs.mean()
-            upper, lower = zs[zs >= mid], zs[zs < mid]
-            if upper.size and lower.size:
-                result["thickness_nm"] = float(upper.mean() - lower.mean())
-                result["leaflets"] = {"upper": int(upper.size), "lower": int(lower.size)}
-        counts = collections.Counter(res for res, atom, _x, _y, z in atoms
-                                     if atom in ("PO4", "ROH"))
+
+        # Counting goes through membrane.count_lipids, not a local bead match. Cardiolipin
+        # carries PO41 and PO42 rather than PO4 and sterols carry neither, so a direct name
+        # match undercounts the first and drops the second, inflating the area per lipid and
+        # the composition line this writes into the report.
+        flat = [(res, atom, z) for res, atom, _x, _y, z in atoms]
+        counts, _zs = membrane.count_lipids(flat)
         result["lipids"] = dict(counts)
         n_lipids = sum(counts.values())
         if n_lipids and area is not None:
             result["area_per_lipid_nm2"] = result["area"]["mean"] / (n_lipids / 2.0)
+
+        # Thickness and the leaflet balance are measured on phosphates only, which is the right
+        # reference for insertion depth; sterols are deliberately absent from this count, so the
+        # two numbers do not have to agree with n_lipids.
+        try:
+            thickness, n_upper, n_lower = membrane.measure_thickness(flat)
+            result["thickness_nm"] = thickness
+            result["leaflets"] = {"upper": n_upper, "lower": n_lower}
+        except SystemExit:
+            # No phosphate beads at all, which a pure sterol or ether-lipid membrane could
+            # produce. Report the rest rather than aborting the whole analysis.
+            result["thickness_nm"] = float("nan")
 
     result["_series"] = {"time": time, "gamma": gamma,
                          "area": area if area is not None else None}
@@ -143,9 +153,11 @@ def verdict(result):
     if "leaflets" in result:
         u, l = result["leaflets"]["upper"], result["leaflets"]["lower"]
         if u != l:
-            notes.append("Leaflets asymmetric (%d vs %d head beads). Intentional only for an "
-                         "outer-membrane model; otherwise this shows up as spontaneous curvature "
-                         "and contaminates the surface tension." % (u, l))
+            notes.append("Leaflets asymmetric (%d vs %d phosphate beads). Intentional only for "
+                         "an outer-membrane model; otherwise this shows up as spontaneous "
+                         "curvature and contaminates the surface tension. Note that sterols are "
+                         "not counted here, so a sterol-rich membrane can be balanced overall "
+                         "while these two differ." % (u, l))
     return notes
 
 

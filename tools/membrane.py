@@ -194,7 +194,10 @@ def cmd_plan(args):
     print("# 1. build")
     print("insane -o %s_raw.gro -p %s.top -pbc rectangular \\" % (args.name, args.name))
     print("    -x %.4f -y %.4f -z %.4f \\" % (args.box, args.box, box_z))
-    print("    %s -u %s -sol W -salt %s -center" % (lipid_arg, lipid_arg.replace("-l ", "-u "), args.salt))
+    # -l sets the lower leaflet and -u the upper. The two strings are built from the same counts,
+    # so the leaflets are symmetric by construction.
+    upper_arg = lipid_arg.replace("-l ", "-u ")
+    print("    %s %s -sol W -salt %s -center" % (lipid_arg, upper_arg, args.salt))
     print()
     print("# Note on -salt: this adds counterions plus the requested concentration. The")
     print("# anionic lipids (POPG, CDL2) need neutralising counterions regardless; the salt")
@@ -243,44 +246,46 @@ def read_gro(path):
 
 
 
-# Head bead names, by lipid family. One bead per lipid is the assumption every count here rests
-# on, and it fails for cardiolipin: CDL2 carries PO41 and PO42, so matching "PO4" exactly misses
-# it entirely while matching the prefix would count it twice. Sterols have no phosphate at all
-# and are identified by ROH. Counting is therefore done per residue rather than per bead.
-HEAD_BEADS = ("PO4", "PO41", "PO42", "ROH", "GL0")
+# Reference bead for counting a lipid. One bead per lipid is what every count here rests on, and
+# a plain name match breaks it in two directions: cardiolipin carries PO41 and PO42, so matching
+# "PO4" exactly misses it while matching the prefix counts it twice, and sterols carry no
+# phosphate at all.
+#
+# The rule is by bead-name shape rather than by a list of residue names. A whitelist is the wrong
+# shape for this: the shipped lipid library defines CDL0, CDL1 and CDL2, and a list that named
+# only two of them would count the third twice, silently and in the direction that inflates the
+# lipid count. Any future renamed or added multi-phosphate lipid is handled the same way.
+STEROL_BEAD = "ROH"
+# PO4 followed by a digit: the numbered phosphates of a multi-phosphate lipid.
+NUMBERED_PHOSPHATE = re.compile(r"^(PO4)(\d+)$")
 
-# Residues whose head bead appears more than once, with how many times.
-MULTI_HEAD = {"CDL2": 2, "CDL0": 2}
+
+def reference_bead(atom, head_bead="PO4"):
+    """
+    Whether this bead is the one that counts its lipid, by name alone.
+
+    The unnumbered head bead (PO4) for an ordinary phospholipid, the sterol hydroxyl (ROH) for a
+    sterol, and only the FIRST numbered phosphate (PO41, not PO42) for a multi-phosphate lipid.
+    """
+    if atom == head_bead or atom == STEROL_BEAD:
+        return True
+    m = NUMBERED_PHOSPHATE.match(atom)
+    return bool(m) and m.group(1) == head_bead and m.group(2) == "1"
 
 
 def count_lipids(atoms, head_bead="PO4"):
     """
-    Lipids per residue name, and the per-leaflet z positions of one reference bead each.
+    Lipids per residue name, and the z position of each one's reference bead.
 
-    Returns (counts, upper_z, lower_z). Counting is by residue identity rather than by bead name
-    so that a lipid with two phosphate groups is counted once, and a sterol with no phosphate is
-    counted at all. The leaflet split uses the midplane of the collected reference beads, not the
-    box centre, so an off-centre membrane does not produce a nonsense thickness.
+    Returns (counts, zs). Counting is by reference bead so that a lipid with two phosphate groups
+    is counted once and a sterol with no phosphate is counted at all.
     """
-    import collections as _c
-    counts = _c.Counter()
+    counts = collections.Counter()
     zs = []
-    seen = set()
-    for index, (res, atom, z) in enumerate(atoms):
-        if atom not in HEAD_BEADS and atom != head_bead:
-            continue
-        # For a two-phosphate lipid take only the first head bead of each residue. The atom list
-        # here carries no residue number, so consecutive runs of the same residue name are used:
-        # within one lipid the head beads are adjacent in the file.
-        key = (res, atom)
-        if res in MULTI_HEAD and atom.endswith("2"):
-            continue
-        if res in MULTI_HEAD and atom == "GL0":
-            continue
-        if res not in MULTI_HEAD and atom == "GL0":
-            continue
-        counts[res] += 1
-        zs.append(z)
+    for res, atom, z in atoms:
+        if reference_bead(atom, head_bead):
+            counts[res] += 1
+            zs.append(z)
     return counts, zs
 
 
@@ -293,8 +298,15 @@ def measure_thickness(atoms, head_bead="PO4"):
     the same depth and counting both would weight it double.
     """
     zs = []
-    for res, atom, z in atoms:
-        if atom == head_bead or (res in MULTI_HEAD and atom == head_bead + "1"):
+    for _res, atom, z in atoms:
+        # Phosphates only: sterols are deliberately excluded, since insertion depth is referenced
+        # to the phosphate plane. A multi-phosphate lipid contributes its first phosphate only,
+        # because both sit at the same depth and counting them twice would weight it double.
+        if atom == head_bead:
+            zs.append(z)
+            continue
+        m = NUMBERED_PHOSPHATE.match(atom)
+        if m and m.group(1) == head_bead and m.group(2) == "1":
             zs.append(z)
     if len(zs) < 2:
         raise SystemExit(

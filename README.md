@@ -65,6 +65,49 @@ The transferable asset is not the fitness function, which is specific to curvatu
    calibrated against peptides whose behaviour is known experimentally. Without that
    calibration the output is a ranking without a scale.
 
+### Relation to Evo-MD-FE
+
+Biriukov and Vacha (2026, reference 2 below) independently adapted the same Evo-MD lineage to a
+bacterial membrane, optimising peptides that reduce the line tension of a membrane pore. Their
+work overlaps this one and bounds what is left to do here, so the differences are worth stating
+precisely rather than discovering later.
+
+They model an effectively infinite toroidal pore as a lipid stripe, take the box size along the
+rim as a collective variable, and obtain the line tension from the slope of the free-energy
+profile over three umbrella-sampling windows. Their fitness is the relative reduction of that
+line tension. The cost is comparable to the two production runs used here, which disposes of the
+assumption that pore energetics are too expensive for a genetic algorithm: what was missing was
+the collective variable, not the compute.
+
+What does not transfer, and why:
+
+- Their headline result is that the best line-tension reducers carry a negatively charged polar
+  face, with lysine almost absent among top performers. That result was obtained with a hybrid
+  Martini 2.2 model using polarisable water, chosen specifically because line tension requires
+  it. Charge-related conclusions are the ones most sensitive to the water model, and this fork
+  keeps Martini 3 with non-polarisable water, so the result is not imported as a prior.
+- Their aromatic-terminal motif is strongly positional: cyclic shifts of their best sequence that
+  preserve composition and helical-wheel arrangement all performed worse. The mechanism they
+  propose is specific to the pore rim, where aromatic ends anchor both helix ends and align the
+  peptide parallel to the membrane edge. The geometry here is a flat bilayer with no rim, so the
+  selective pressure that produced the motif is absent and the motif is not encoded as a
+  constraint. Whether it emerges anyway from an unconstrained run is a result either way.
+- They report that two model curvature-sensing peptides showed no appreciable line-tension
+  reduction. This is a direct challenge to the premise of the damage objective here, which treats
+  induced leaflet strain as a damage proxy. Pore formation and pore stabilisation may simply be
+  different steps, weakly correlated or anticorrelated. The calibration run settles it cheaply.
+
+What this fork adds is the step their conclusions leave open: they simulate peptides already
+placed at the pore rim, so membrane recruitment and selectivity are not part of the calculation,
+and they flag explicitly that whether their anionic peptides can target an anionic membrane
+remains to be established. Recruitment against a host membrane is what the binding objective here
+measures. The tension between the two steps, cationic for recruitment and anionic for pore-rim
+stabilisation, is the interesting part rather than a contradiction to resolve.
+
+Adopted from their methodology, all of it force-field independent: neutral peptide termini,
+explicit physiological salt, replicate evaluations per candidate, and the exclusion of isoleucine
+on the grounds documented in `user/usersettings.py`.
+
 ## Order of work
 
 The calibration run comes first, and it uses no genetic algorithm.
@@ -107,6 +150,14 @@ electrostatics and non-polarisable water, and the systems carry no salt beyond t
 added for neutralisation. For a cationic peptide against an anionic membrane that combination
 is the least favourable case. Physiological ionic strength and polarisable water should be
 evaluated before any quantitative claim.
+
+**Force field.** This fork keeps Martini 3, inherited from reference 1. Reference 2 chose a
+hybrid Martini 2.2 model with polarisable water instead, citing a report that Martini 3 captures
+peptide curvature sensing less accurately, and noting that polarisable water is needed to
+reproduce membrane line tension. The observable used here is derived from exactly that physics,
+so the criticism applies. Keeping Martini 3 is a deliberate choice for continuity with the method
+this fork is built on, not evidence that the concern does not hold, and any quantitative claim
+should address it.
 
 **Ensemble.** The constant-area coupling in `npt.mdp` is load-bearing. Under a
 constant-tension barostat the area would respond instead and gamma would be pinned near its
@@ -191,10 +242,23 @@ tests/                       regression tests, no GROMACS required
 calibration/reference_popc/  the original POPC membranes and reference energies, as provenance
 ```
 
-## Citation
+## References
 
-The method and the code this is built on:
+1. van Hilten, N.; Methorst, J.; Verwei, N.; Risselada, H. J. Physics-based generative model of
+   curvature sensing peptides; distinguishing sensors from binders. *Science Advances* **2023**,
+   9 (11), eade8839. DOI [10.1126/sciadv.ade8839](https://doi.org/10.1126/sciadv.ade8839)
 
-van Hilten, N.; Methorst, J.; Verwei, N.; Risselada, H. J. Physics-based generative model of
-curvature sensing peptides; distinguishing sensors from binders. *Science Advances* **2023**,
-9 (11), eade8839. DOI 10.1126/sciadv.ade8839
+   The method and the code this fork is built on. Cite this when using the pipeline. Their Evo-MD
+   and CNN code and datasets are at [zenodo.org/record/7380110](https://zenodo.org/record/7380110);
+   the Evo-MD source is at
+   [github.com/nvanhilten/Evo-MD_curvature_sensing](https://github.com/nvanhilten/Evo-MD_curvature_sensing).
+
+2. Biriukov, D.; Vacha, R. Peptide Sequence Features that Reduce Membrane Pore Line Tension.
+   *bioRxiv* **2026**, posted 10 September 2026, v1.
+   DOI [10.64898/2026.09.06.749768](https://doi.org/10.64898/2026.09.06.749768)
+
+   Preprint, not peer reviewed. The nearest prior work: the same Evo-MD lineage applied to a
+   bacterial membrane with a pore line-tension objective. Their design decisions and their open
+   questions shaped several choices here; see "Relation to Evo-MD-FE" above. Their code and files
+   are to be released on Zenodo following peer review and were not available when this was
+   written.

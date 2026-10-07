@@ -10,3 +10,6 @@ output/
 # provenance for where the original reference constants came from.
 *.edr
 !calibration/reference_popc/*.edr
+prep/
+report/
+fake_progress.txt

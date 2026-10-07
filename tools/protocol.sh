@@ -22,6 +22,17 @@ COMPOSITION="${2:?composition, e.g. POPE:70,POPG:20,CDL2:10}"
 ROLE="${3:-target}"
 
 GMX="${GMX:-gmx}"
+# Membrane preparation is a handful of long runs rather than many short ones, so here a single
+# process with many threads is the right shape, unlike the candidate evaluations. Leaves one
+# core free by default; override with NT.
+NT="${NT:-$(python3 -c "
+import os
+try:
+    n = len(os.sched_getaffinity(0))
+except Exception:
+    n = os.cpu_count() or 1
+print(max(1, n - 1))
+")}"
 BOX="${BOX:-8.0}"              # lateral box in nm, both dimensions
 MAX_RESIDUES="${MAX_RESIDUES:-30}"
 SALT="${SALT:-0.15}"           # mol/L, on top of neutralising counterions
@@ -39,6 +50,7 @@ MDP_DIR="${HERE}/user/base/production"
 say() { printf '\n=== %s ===\n' "$1"; }
 
 # ---------------------------------------------------------------------------
+echo "Using ${NT} thread(s) for GROMACS. Override with NT=<n>."
 say "1/7  plan"
 # ---------------------------------------------------------------------------
 python3 "${HERE}/tools/membrane.py" plan \
@@ -70,7 +82,7 @@ say "3/7  minimise"
 # ---------------------------------------------------------------------------
 sed "s|\$INCLUDE_CWD|-I$(pwd)|" "${MDP_DIR}/steep_softcore_system.mdp" > min.mdp
 "${GMX}" grompp -f min.mdp -c "${NAME}_raw.gro" -p "${NAME}.top" -o min.tpr -maxwarn 2
-"${GMX}" mdrun -deffnm min
+"${GMX}" mdrun -deffnm min -nt "${NT}"
 
 # ---------------------------------------------------------------------------
 say "4/7  equilibrate at zero tension (semi-isotropic) to find the equilibrium area"
@@ -106,7 +118,7 @@ gen_temp                 = 310
 refcoord_scaling         = all
 EOF
 "${GMX}" grompp -f equil.mdp -c min.gro -p "${NAME}.top" -o equil.tpr -maxwarn 2
-"${GMX}" mdrun -deffnm equil
+"${GMX}" mdrun -deffnm equil -nt "${NT}"
 
 # ---------------------------------------------------------------------------
 say "5/7  measure the equilibrium area per lipid and re-plan"
@@ -150,7 +162,7 @@ sed -e "s|\$INCLUDE_CWD|-I$(pwd)|" \
     -e "s|\$SIM_NSTEPS|$(python3 -c "print(int(${PROD_NS}*1000/0.03))")|" \
     "${MDP_DIR}/npt.mdp" > prod.mdp
 "${GMX}" grompp -f prod.mdp -c "${NAME}_eq.gro" -p "${NAME}.top" -o "${NAME}.tpr" -maxwarn 2
-"${GMX}" mdrun -deffnm "${NAME}"
+"${GMX}" mdrun -deffnm "${NAME}" -nt "${NT}"
 
 # ---------------------------------------------------------------------------
 say "7/7  extract, analyse, emit the MembraneDef"

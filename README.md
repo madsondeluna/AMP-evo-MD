@@ -193,9 +193,14 @@ module purge
 module load gromacs/2024.3     # exact version, not a bare 'gromacs'
 export GMX=gmx                 # or gmx_mpi
 export GMX_VERSION_EXPECT=2024.3
-export OMP_NUM_THREADS=4
+
+# Ranks and threads sized to this machine, leaving one core free.
+eval "$(python3 "$HOME/AMP-evo-MD/tools/cores.py" --export)"
 EOF
 ```
+
+That `eval` sets `AMP_NP` and `OMP_NUM_THREADS`. Run `python3 tools/cores.py` without
+`--export` to see what it chose and why.
 
 Source it before every run: `source ~/amp-env.sh`.
 
@@ -341,10 +346,10 @@ module load gromacs                 # the exact module name for this machine
 export GMX=gmx                      # or gmx_mpi, whichever 'which' found
 export GMX_VERSION_EXPECT=2024.3    # stop if a different build gets loaded
 export MARTINIZE2=martinize2
-export OMP_NUM_THREADS=4
 export PATH="$HOME/bin:$PATH"       # for insane
 
 source "$HOME/AMP-evo-MD/.venv/bin/activate"
+eval "$(python3 "$HOME/AMP-evo-MD/tools/cores.py" --export)"
 ```
 
 Source it before every run, rather than relying on `.bashrc`.
@@ -462,26 +467,54 @@ Put one sequence per line in `seq.txt`, set `STATE = 1` in `run.py`, and set
 insertion-depth analysis reads it; the GA campaign later turns it back off, since storing
 trajectories for thousands of candidates fills a disk quickly.
 
-With MPI:
+With MPI, using the layout `amp-env.sh` computed:
 
 ```bash
-export OMP_NUM_THREADS=4
-mpirun -np 8 python run.py --output_dir calibration_run
+source ~/amp-env.sh
+mpirun -np $AMP_NP python run.py --output_dir calibration_run
 ```
 
 Without MPI, the same command minus `mpirun`. It runs the sequences one after another in a
 single process, which is slow but not blocked, and for a calibration set of a few dozen peptides
-it is a perfectly reasonable way to work:
+that is a perfectly reasonable way to work:
 
 ```bash
-export OMP_NUM_THREADS=16        # give the single GROMACS process more threads instead
+export OMP_NUM_THREADS=$(python3 tools/cores.py --threads-per-rank 99 --export \
+                         | sed -n 's/export OMP_NUM_THREADS=//p')
 python run.py --output_dir calibration_run
 ```
 
-Choosing `-np`: match the physical cores, not threads. Each MPI rank runs its own GROMACS
-process, and oversubscribing slows everything down. `-np` times `OMP_NUM_THREADS` should not
-exceed what `nproc` reports. On a 32-core workstation, `-np 8` with `OMP_NUM_THREADS=4` is a
-reasonable starting point. On a shared machine, leave headroom for whoever else is on it.
+### How many ranks and threads
+
+`tools/cores.py` works this out, but the reasoning is worth knowing, because the obvious answer
+is wrong in two ways.
+
+**Count physical cores, not `nproc`.** On a machine with hyperthreading, `nproc` reports twice
+the physical core count. GROMACS will place two threads on one physical core where they contend
+for the same execution units, which for small coarse-grained systems is usually a net loss. The
+script parses `lscpu` for the real figure and falls back to logical CPUs only when it cannot.
+
+**Prefer many ranks over many threads.** There is no single number to set: occupancy is ranks
+times threads per rank, and the split matters more than the product. This pipeline evaluates
+many independent candidates, so throughput is what counts, not how fast any one simulation
+finishes. A roughly 5000-particle Martini system stops scaling after a few threads, because
+domain decomposition and communication overhead grow faster than the work does. Fifteen ranks of
+two threads therefore completes fifteen candidates in about the time four ranks of eight threads
+completes four, on the same thirty cores. The default is two threads per rank for that reason.
+
+On a 32-core workstation the script returns fifteen ranks of two threads, leaving one core free
+for the session and one idle because thirty-one does not divide by two. To use that last core,
+pass `--threads-per-rank 1`.
+
+```bash
+python3 tools/cores.py                       # explain the choice
+python3 tools/cores.py --reserve 2           # leave two cores free on a shared machine
+python3 tools/cores.py --threads-per-rank 1  # maximum rank count, nothing idle
+python3 tools/cores.py --cores 64            # plan for a machine you are not on
+```
+
+The one core held back costs a few percent of throughput and keeps the machine usable while a
+campaign runs, which on a shared workstation is not optional.
 
 ### Step 3: the go/no-go check
 
@@ -521,7 +554,7 @@ tmux new -s campaign
 # inside tmux:
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
-mpirun -np 8 python run.py --output_dir campaign_damage      # drop mpirun if no MPI
+mpirun -np $AMP_NP python run.py --output_dir campaign_damage   # drop mpirun if no MPI
 # detach with Ctrl-b then d
 ```
 
@@ -529,13 +562,13 @@ Reattach later from any session with `tmux attach -t campaign`. If `tmux` is not
 you cannot install it, `screen` is usually present, and failing both:
 
 ```bash
-nohup mpirun -np 8 python run.py --output_dir campaign_damage > campaign.log 2>&1 &
+nohup mpirun -np $AMP_NP python run.py --output_dir campaign_damage > campaign.log 2>&1 &
 ```
 
 Resuming after a crash, a reboot, or a scheduler kill:
 
 ```bash
-mpirun -np 8 python run.py --output_dir campaign_damage \
+mpirun -np $AMP_NP python run.py --output_dir campaign_damage \
     --restart campaign_damage/checkpoint.dat
 ```
 
@@ -782,6 +815,7 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
 
 | Task | Command |
 |---|---|
+| Size ranks and threads for this machine | `python tools/cores.py` |
 | Prepare a membrane | `./tools/protocol.sh <name> "<composition>" <role>` |
 | Check a membrane is usable | `python tools/membrane_analysis.py single --name X --dir prep/X` |
 | Compare membranes | `python tools/membrane_analysis.py compare --dir prep --names bacterial host` |

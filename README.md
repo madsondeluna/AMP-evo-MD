@@ -623,42 +623,6 @@ the realistic options are getting MPI working, reducing the population and itera
 moving the campaign to a cluster with a scheduler. The calibration set, which is what actually
 has to happen first, is fine serially.
 
-### What a candidate leaves behind
-
-Each candidate directory under `--output_dir` holds:
-
-| File | Contents |
-|---|---|
-| `steps.jsonl` | one record per pipeline step: name, start time, duration, outcome |
-| `stdout_stderr.log` | every GROMACS and martinize2 command, with a banner between steps |
-| `observables.json` | the measured observables, plus which GROMACS produced them |
-| `fitness` | the score and its components |
-| `production_*.log` | the mdrun logs: performance, domain decomposition, warnings |
-| `failed_<step>/` | present only on failure: the working directory at the moment it broke |
-
-`steps.jsonl` is JSON Lines, one object per line, appended as each step finishes and flushed
-immediately. That format is readable after a crash mid-campaign, because every completed record
-is valid on its own and a line truncated by a kill is simply skipped.
-
-```bash
-# which step is each candidate on, and how long is it taking
-cat campaign_damage/*/steps.jsonl | python3 -c "
-import sys, json
-for line in sys.stdin:
-    r = json.loads(line)
-    if r.get('event') == 'step':
-        print('%-16s %-8s %8.1f s  %s' % (r['step'], r['status'], r['seconds'], r.get('sequence','')[:24]))
-"
-
-# everything that failed, and where its intermediates were kept
-grep -h '"event": "abort"' campaign_damage/*/steps.jsonl
-```
-
-Diagnosing a failure starts in `failed_<step>/`. The pipeline runs each candidate in a temporary
-directory that is deleted when the simulation object goes out of scope, which used to remove the
-intermediates at exactly the moment they were needed; on failure that directory is now copied
-next to the output first.
-
 ### Step 5: watch it while it runs
 
 The report tool reads the progress file the GA appends to as it goes, so it can be pointed at a
@@ -669,19 +633,9 @@ python tools/ga_report.py campaign_damage/output.txt --outdir report_damage
 ```
 
 It writes `progress.csv`, `summary.json` and three figures, and prints a summary table with a
-plain-language reading of the state of the search, followed by where the wall time went:
-
-```
-TIMING BY STEP
-  step                  n  failed      total     median        p90        max   share
-  production         1440       3     38.2 d     42.1 min   58.4 min    3.1 h     94%
-  build_peptide      1443       0      4.1 h      9.8 s      14.2 s     41.0 s      1%
-  insert             1443       0      2.2 h      5.4 s       7.1 s     22.0 s      1%
-```
-
-The median and the 90th percentile are reported alongside the mean because the operational
-question is the tail: a handful of candidates taking many times longer than typical is what
-decides whether a campaign finishes this week, and a mean hides it.
+plain-language reading of the state of the search, followed by a TIMING BY STEP table showing
+where the wall time went. That table and the per-step logs it reads are described under
+[Logs and diagnostics](#logs-and-diagnostics).
 
 Read fitness and diversity together, never fitness alone. Rising fitness on its own does not
 distinguish a search that found a motif from one that collapsed onto a few near-identical
@@ -721,7 +675,128 @@ to run this at all.
 Disk: with `WRITE_XTC = False` each candidate leaves a few megabytes. With it on, budget
 hundreds of megabytes per candidate, which is why it is only enabled for the calibration set.
 
+## Logs and diagnostics
+
+Every evaluation records what it did, step by step. This matters because a campaign runs for days
+without supervision: when a candidate takes an hour or dies, the question is always *which stage*,
+and guessing from a wall of GROMACS output is not an answer.
+
+### Where everything lands
+
+```
+campaign_damage/
+  output.txt                     the GA progress file: fitness per iteration
+  checkpoint.dat                 restart state
+  KWLRKAFKKLASKALQSLWSALAQ/      one directory per candidate
+    steps.jsonl                  one record per pipeline step
+    stdout_stderr.log            every command, with a banner between steps
+    observables.json             the measurements, and which GROMACS produced them
+    fitness                      the score and its components
+    production_bacterial.log     mdrun log: performance, decomposition, warnings
+    production_host.log
+    failed_<step>/               only on failure: the working directory as it broke
+```
+
+### steps.jsonl
+
+One JSON object per line, appended as each step finishes and flushed to disk immediately:
+
+```json
+{"event": "step", "index": 2, "seconds": 2531.4, "sequence": "KWLRKAFKKLASKALQSLWSALAQ",
+ "started": "2026-10-08T14:02:11+02:00", "status": "ok", "step": "production",
+ "time": "2026-10-08T14:44:22+02:00"}
+```
+
+and when a step fails, the step record followed by an abort record:
+
+```json
+{"error": "3", "error_type": "SystemExit", "event": "step", "index": 1, "seconds": 3.1,
+ "status": "failed", "step": "insert", "traceback": "..."}
+{"error": "3", "error_type": "SystemExit", "event": "abort", "index": 1,
+ "preserved": ".../failed_insert", "step": "insert"}
+```
+
+Keys are written sorted, so a grep for a fixed substring such as `'"event": "abort"'` is stable
+across versions. A candidate that completes also writes a final `{"event": "finish", ...}`.
+
+The five step names, in order: `build_peptide`, `insert`, `production`, `observables`, `fitness`.
+
+JSON Lines rather than a single JSON array, for two reasons that matter in practice. Every
+completed record is valid on its own, so the file is readable after a crash mid-campaign and a
+line truncated by a scheduler kill is simply skipped. And appending never rewrites what is
+already there, so the cost does not grow with the length of the run.
+
+### Reading the logs
+
+```bash
+# which step is each candidate on, and how long is it taking
+cat campaign_damage/*/steps.jsonl | python3 -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    if r.get('event') == 'step':
+        print('%-16s %-8s %8.1f s  %s' % (r['step'], r['status'], r['seconds'],
+                                          r.get('sequence', '')[:24]))
+"
+
+# how far a given candidate got. Records are written when a step finishes, so the last
+# line is the last completed step and the one in progress is the next in the order above.
+# An "event": "finish" line means the candidate is done.
+tail -1 campaign_damage/KWLRKAFKKLASKALQSLWSALAQ/steps.jsonl
+
+# everything that failed, and where its intermediates were kept
+grep -h '"event": "abort"' campaign_damage/*/steps.jsonl
+
+# where the wall time went, as a table
+python tools/ga_report.py campaign_damage/output.txt --outdir report --no-figures
+```
+
+That last command prints, after the fitness summary:
+
+```
+TIMING BY STEP
+  step                  n  failed      total     median        p90        max   share
+  production         1440       3     38.2 d     42.1 min   58.4 min    3.1 h     94%
+  build_peptide      1443       0      4.1 h      9.8 s      14.2 s     41.0 s      1%
+  insert             1443       0      2.2 h      5.4 s       7.1 s     22.0 s      1%
+
+  wall time across all steps  40.6 d
+  failed steps                3
+  intermediates preserved for diagnosis:
+    production     campaign_damage/GIGKFLHSAKKFGKAFVGEIMNS/failed_production
+```
+
+Median and 90th percentile sit beside the mean because the operational question is the tail. A
+handful of candidates taking many times longer than typical is what decides whether a campaign
+finishes this week, and a mean hides exactly that.
+
+### Diagnosing a failure
+
+Start at `failed_<step>/`. Each candidate runs in a temporary directory that is deleted when the
+simulation finishes, which used to remove the intermediates at precisely the moment they were
+needed; on failure that directory is now copied next to the output first, so the `.gro`, `.top`,
+`.tpr` and `.mdp` files are exactly as they were when the step broke.
+
+Then `stdout_stderr.log` in the same directory, which carries every command's output with a
+banner naming the step:
+
+```
+==============================================================================
+=== STEP 1: insert ===
+==============================================================================
+```
+
+A single failed candidate does not stop a campaign: it is scored at the worst possible fitness
+and the run continues. Ten consecutive failures do abort, because an unbroken run of them is the
+setup rather than the sequences.
+
 ## Troubleshooting
+
+**Start here for anything that happens during a run.** `steps.jsonl` in the candidate's directory
+names the step that failed; `failed_<step>/` holds the working directory as it was at that moment;
+`stdout_stderr.log` carries the command output under a banner for that step. See
+"Logs and diagnostics" above. The entries below are for failures that happen before any of that
+exists.
 
 **`UncalibratedMembrane` on startup.** Expected until step 1 is complete. The exception names
 which reference values are missing.
@@ -764,6 +839,16 @@ the asymmetry is intentional for an outer-membrane model.
 edited or an older `.edr` is being read. The damage objective does not need those terms, but the
 binding objective does, which means a run configured for damage with `energygrps` disabled
 cannot be re-scored for binding after the fact.
+
+**A candidate is taking far longer than the others.** `tail -1 <candidate>/steps.jsonl` says
+which step it is on. If it is `production`, check `production_*.log` for the mdrun performance
+line and for domain decomposition warnings; a system that cannot be decomposed for the requested
+thread count runs far slower without failing. The timing table from `tools/ga_report.py` shows
+whether this is one outlier or the typical case.
+
+**A campaign produced mostly worst-possible scores.** Those are failed evaluations, not bad
+peptides. `grep -h '"status": "failed"' <dir>/*/steps.jsonl` lists them with the step and the
+error; if they are all the same step with the same error, the fault is in the setup.
 
 **The campaign stops improving early.** Look at the diversity panels before changing the
 objective. If positional entropy is near zero across all positions, the population has collapsed

@@ -343,7 +343,10 @@ def module_production_2mem(simulation):
 
         simulation._share.add_file("prod-%s-GRO" %membrane_type, LocalFiles.GRO, True)
         simulation._share.add_file("prod-%s-EDR" %membrane_type, LocalFiles.EDR, True)
-        simulation._share.add_file("prod-%s-LOG" %membrane_type, LocalFiles.LOG, False)
+        # Copied out, unlike upstream. This is the mdrun log: performance, domain decomposition,
+        # constraint warnings and the reason for any instability. A campaign that runs slower
+        # than expected, or a candidate that blows up, explains itself here and nowhere else.
+        simulation._share.add_file("prod-%s-LOG" %membrane_type, LocalFiles.LOG, True)
         simulation._share.add_file("prod-%s-MDOUT" %membrane_type, LocalFiles.MDOUT, True)
         if UserSettings.WRITE_XTC:
             #print("production.py: Writing Trajectories.")

@@ -26,7 +26,8 @@ class _FakeSimulation:
     fail_on = set()
     counter = 0
 
-    def __init__(self, directory):
+    def __init__(self, directory, sequence=None, keep_on_failure=True):
+        # Mirrors the real signature, which now takes the sequence for the step log.
         pass
 
     def add_input_file(self, path):
@@ -49,7 +50,9 @@ class TestFailedEvaluation(unittest.TestCase):
     def setUp(self):
         self._real_sim = run.Sim
         self._real_setup = run._setup_simulation_directory
-        run.Sim = types.SimpleNamespace(Simulation=_FakeSimulation, Module=lambda f: f)
+        # Module now takes an optional step name for the log.
+        run.Sim = types.SimpleNamespace(Simulation=_FakeSimulation,
+                                        Module=lambda f, name=None: f)
         run._setup_simulation_directory = lambda seq, parent, dirname=None: "/tmp"
         _FakeSimulation.counter = 0
         _FakeSimulation.fail_on = set()

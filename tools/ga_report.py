@@ -36,7 +36,15 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import mdtools
+
+try:
+    import core.steplog as steplog
+except ImportError:
+    # The report is meant to run against results copied off a cluster, where the package may not
+    # be importable. Timing is then simply omitted.
+    steplog = None
 
 
 ITER_RE = re.compile(r"^Iteration\s+(\d+)\s*:")
@@ -396,6 +404,61 @@ def print_summary(settings, rows, iterations, last_improved, top_n, unparsed):
             mdtools.net_charge(r["sequence"]), r["n_run"]))
 
 
+def print_timing(campaign_dir):
+    """
+    Where the wall time actually went, per step.
+
+    Reports the median and the 90th percentile alongside the mean, because the operational
+    question is the tail: a handful of candidates taking many times longer than typical is what
+    decides whether a campaign finishes this week, and a mean hides that entirely.
+    """
+    if steplog is None or not campaign_dir or not os.path.isdir(campaign_dir):
+        return
+    records = steplog.collect(campaign_dir)
+    if not records:
+        return
+    rows = steplog.summarise(records)
+    if not rows:
+        return
+
+    print("TIMING BY STEP")
+    header = ("step", "n", "failed", "total", "median", "p90", "max", "share")
+    print("  %-16s %6s %7s %10s %10s %10s %10s %7s" % header)
+    for r in rows:
+        print("  %-16s %6d %7d %10s %10s %10s %10s %6.0f%%" % (
+            r["step"][:16], r["n"], r["failed"],
+            steplog.format_duration(r["total_seconds"]),
+            steplog.format_duration(r["median_seconds"]),
+            steplog.format_duration(r["p90_seconds"]),
+            steplog.format_duration(r["max_seconds"]),
+            100 * r["share"]))
+
+    total = sum(r["total_seconds"] for r in rows)
+    failures = sum(r["failed"] for r in rows)
+    print()
+    print("  wall time across all steps  %s" % steplog.format_duration(total))
+    if failures:
+        print("  failed steps                %d" % failures)
+        aborts = [r for r in records if r.get("event") == "abort"]
+        if aborts:
+            print("  intermediates preserved for diagnosis:")
+            for a in aborts[:5]:
+                if a.get("preserved"):
+                    print("    %-14s %s" % (a.get("step", "?"), a["preserved"]))
+            if len(aborts) > 5:
+                print("    ... and %d more" % (len(aborts) - 5))
+
+    # The slowest step is where any speedup has to come from, so say it rather than leaving it
+    # to be read off the table.
+    slowest = rows[0]
+    if slowest["share"] > 0.5:
+        print()
+        print("  Reading: %s accounts for %.0f%% of the wall time. Anything that does not make"
+              % (slowest["step"], 100 * slowest["share"]))
+        print("  that step cheaper will not noticeably shorten a campaign.")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -405,6 +468,9 @@ def main():
     parser.add_argument("--parents", type=int, default=None,
                         help="parent pool size; read from the progress file when omitted")
     parser.add_argument("--no-figures", action="store_true", help="tables only")
+    parser.add_argument("--campaign-dir", default=None,
+                        help="where the per-candidate directories are, if not alongside the "
+                             "progress file; used for the step timing table")
     args = parser.parse_args()
 
     settings, iterations, unparsed = parse_progress(args.progress)
@@ -427,6 +493,11 @@ def main():
                    "top": top_sequences(iterations, args.top)}, handle, indent=2)
 
     print_summary(settings, rows, iterations, last_improved, args.top, unparsed)
+
+    # The campaign directory is where the progress file lives, which is where run.py puts the
+    # per-candidate directories too.
+    print()
+    print_timing(args.campaign_dir or os.path.dirname(os.path.abspath(args.progress)))
 
     if not rows:
         # print_summary already said so. The figures index into rows unconditionally, so bail

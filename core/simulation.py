@@ -3,9 +3,15 @@ import shutil
 import os
 import sys
 
+import core.steplog as StepLog
+
+
 class Module():
-    def __init__(self, module_pointer):
+    def __init__(self, module_pointer, name=None):
         self._ptr = module_pointer  # ptr to module function
+        # Falls back to the function name, so existing callers that pass only the pointer still
+        # produce a readable step name in the log.
+        self.name = name or getattr(module_pointer, "__name__", "module")
 
     def run(self, simulation):
         return self._ptr(simulation)
@@ -36,7 +42,7 @@ class Simulation():
                     file_obj.bWrite = False
                     shutil.copyfile(os.path.join(self.dir, file_obj.filename), os.path.join(dst_dir, file_obj.filename))
 
-    def __init__(self, output_dir):
+    def __init__(self, output_dir, sequence=None, keep_on_failure=True):
         self._input_data_paths  = []            # List of paths to input files, will be copied to temp dir upon start of run()
         self._output_dir        = output_dir    # To which certain output (specified by the called module) will be copied from the temp_dir
         self._modules           = []            # Contains module objects in the order of execution
@@ -44,6 +50,14 @@ class Simulation():
 
         self._share             = None          # SharedFiles object accessed by the modules
         self._temp_dir          = None          # In which all simulation input/output will be stored, created/destroyed outside the class
+
+        self._sequence          = sequence      # Recorded in the step log, so a log line identifies its candidate
+        # On failure, copy the temporary directory next to the output rather than letting
+        # TemporaryDirectory delete it. Without this the intermediates of a failed candidate are
+        # gone by the time anyone looks, and only the concatenated stdout survives, which is the
+        # worst moment to have the least information.
+        self._keep_on_failure   = keep_on_failure
+        self._log               = StepLog.StepLog(output_dir, sequence)
 
     def add_input_file(self, filepath):
         if os.path.isfile(filepath):
@@ -55,6 +69,41 @@ class Simulation():
     def add_module(self, module_pointer):
         self._modules.append(module_pointer)
 
+    def _mark_log(self, step_name, index):
+        """
+        Write a banner into the concatenated command log before each step starts.
+
+        Every GROMACS and martinize2 call appends its stdout and stderr to one file. Without a
+        separator that file is an undifferentiated wall of output, and finding which command
+        produced a given error means guessing. These banners are what make it greppable.
+        """
+        import core.settings as CoreSettings
+        if not CoreSettings.write_stdout_stderr_to_file or not self._output_dir:
+            return
+        path = os.path.join(self._output_dir, CoreSettings.filename_output_stdout_stderr)
+        try:
+            os.makedirs(self._output_dir, exist_ok=True)
+            with open(path, "a") as handle:
+                handle.write("\n%s\n=== STEP %d: %s ===\n%s\n"
+                             % ("=" * 78, index, step_name, "=" * 78))
+        except OSError:
+            # Same rule as the step log: observing the run must never break it.
+            pass
+
+    def _preserve_temp_dir(self, step_name):
+        """Copy the working directory next to the output so a failure can be diagnosed."""
+        if not self._keep_on_failure or not self._temp_dir:
+            return None
+        destination = os.path.join(self._output_dir, "failed_" + str(step_name))
+        try:
+            if os.path.exists(destination):
+                shutil.rmtree(destination)
+            shutil.copytree(self._temp_dir, destination)
+            return destination
+        except OSError:
+            # Preserving the evidence must never become the reason the run stops.
+            return None
+
     def run(self):
         with TemporaryDirectory() as self._temp_dir:
             for path in self._input_data_paths:
@@ -62,9 +111,26 @@ class Simulation():
                 shutil.copyfile(path, os.path.join(self._temp_dir, filename))
 
             self._share = self.SharedFiles(self._temp_dir)
-            for module in self._modules:
-                module.run(self)
-                self._share.write_to_output_dir(self._output_dir)
+            self._log.event("start", modules=[m.name for m in self._modules],
+                            output_dir=self._output_dir)
+
+            for index, module in enumerate(self._modules):
+                self._mark_log(module.name, index)
+                try:
+                    with self._log.step(module.name, index=index):
+                        module.run(self)
+                        self._share.write_to_output_dir(self._output_dir)
+                except BaseException as exc:
+                    # BaseException on purpose: core.system.check_exitcode raises SystemExit on a
+                    # non-zero command, and that is exactly the case where the intermediates and
+                    # a log line are most needed. The exception is re-raised untouched.
+                    kept = self._preserve_temp_dir(module.name)
+                    self._log.event("abort", step=module.name, index=index,
+                                    error_type=type(exc).__name__, error=str(exc)[:2000],
+                                    preserved=kept)
+                    raise
+
+            self._log.event("finish", status="ok")
 
     def get_output_variable(self, key):
         return self._output_variables[key]

@@ -623,6 +623,42 @@ the realistic options are getting MPI working, reducing the population and itera
 moving the campaign to a cluster with a scheduler. The calibration set, which is what actually
 has to happen first, is fine serially.
 
+### What a candidate leaves behind
+
+Each candidate directory under `--output_dir` holds:
+
+| File | Contents |
+|---|---|
+| `steps.jsonl` | one record per pipeline step: name, start time, duration, outcome |
+| `stdout_stderr.log` | every GROMACS and martinize2 command, with a banner between steps |
+| `observables.json` | the measured observables, plus which GROMACS produced them |
+| `fitness` | the score and its components |
+| `production_*.log` | the mdrun logs: performance, domain decomposition, warnings |
+| `failed_<step>/` | present only on failure: the working directory at the moment it broke |
+
+`steps.jsonl` is JSON Lines, one object per line, appended as each step finishes and flushed
+immediately. That format is readable after a crash mid-campaign, because every completed record
+is valid on its own and a line truncated by a kill is simply skipped.
+
+```bash
+# which step is each candidate on, and how long is it taking
+cat campaign_damage/*/steps.jsonl | python3 -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    if r.get('event') == 'step':
+        print('%-16s %-8s %8.1f s  %s' % (r['step'], r['status'], r['seconds'], r.get('sequence','')[:24]))
+"
+
+# everything that failed, and where its intermediates were kept
+grep -h '"event": "abort"' campaign_damage/*/steps.jsonl
+```
+
+Diagnosing a failure starts in `failed_<step>/`. The pipeline runs each candidate in a temporary
+directory that is deleted when the simulation object goes out of scope, which used to remove the
+intermediates at exactly the moment they were needed; on failure that directory is now copied
+next to the output first.
+
 ### Step 5: watch it while it runs
 
 The report tool reads the progress file the GA appends to as it goes, so it can be pointed at a
@@ -633,7 +669,19 @@ python tools/ga_report.py campaign_damage/output.txt --outdir report_damage
 ```
 
 It writes `progress.csv`, `summary.json` and three figures, and prints a summary table with a
-plain-language reading of the state of the search.
+plain-language reading of the state of the search, followed by where the wall time went:
+
+```
+TIMING BY STEP
+  step                  n  failed      total     median        p90        max   share
+  production         1440       3     38.2 d     42.1 min   58.4 min    3.1 h     94%
+  build_peptide      1443       0      4.1 h      9.8 s      14.2 s     41.0 s      1%
+  insert             1443       0      2.2 h      5.4 s       7.1 s     22.0 s      1%
+```
+
+The median and the 90th percentile are reported alongside the mean because the operational
+question is the tail: a handful of candidates taking many times longer than typical is what
+decides whether a campaign finishes this week, and a mean hides it.
 
 Read fitness and diversity together, never fitness alone. Rising fitness on its own does not
 distinguish a search that found a motif from one that collapsed onto a few near-identical
@@ -864,6 +912,7 @@ needed for those.
 ```
 core/                        genetic algorithm and GROMACS wrappers, from upstream
   provenance.py              records which GROMACS produced a run; added by this fork
+  steplog.py                 per-step timing and outcome logging; added by this fork
 user/
   membranes.py               membrane registry and reference measurements
   usersettings.py            run configuration, objective selection
@@ -904,6 +953,7 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
 | The go or no-go check | `python calibrate.py <dir> --labels labels.csv` |
 | Run a campaign | `run.py` with `STATE = 0` |
 | Watch a campaign | `python tools/ga_report.py <dir>/output.txt --outdir report` |
+| See which step a candidate is on | `tail -1 <dir>/<SEQUENCE>/steps.jsonl` |
 | Re-score under the other objective | `python calibrate.py <dir> --objective binding` |
 
 ## References

@@ -79,18 +79,20 @@ def _compute_fitness_simulation(sequence, dirname=None):
 
     while True:
         try:
-            simulation = Sim.Simulation(sequence_dir)
+            simulation = Sim.Simulation(sequence_dir, sequence=sequence)
 
             simulation.add_input_file(os.path.join(sequence_dir, UserSettings.filename_seq))
             simulation.add_input_file(os.path.join(sequence_dir, UserSettings.filename_ssd))
 
-            simulation.add_module(Sim.Module(module_generate_peptide))
-            simulation.add_module(Sim.Module(module_insert_peptide_nmem))
+            # Short names rather than the function names, because these are what a reader scans
+            # in steps.jsonl and in the timing table.
+            simulation.add_module(Sim.Module(module_generate_peptide, "build_peptide"))
+            simulation.add_module(Sim.Module(module_insert_peptide_nmem, "insert"))
             # module_production_2mem is named for its origin but loops over membrane_types and
             # is already generic over the number of compositions.
-            simulation.add_module(Sim.Module(module_production_2mem))
-            simulation.add_module(Sim.Module(module_compute_observables))
-            simulation.add_module(Sim.Module(module_compute_fitness))
+            simulation.add_module(Sim.Module(module_production_2mem, "production"))
+            simulation.add_module(Sim.Module(module_compute_observables, "observables"))
+            simulation.add_module(Sim.Module(module_compute_fitness, "fitness"))
 
             simulation.run()
 

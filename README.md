@@ -120,14 +120,16 @@ The calibration run comes first, and it uses no genetic algorithm.
 1. **Build and calibrate the membranes.** Each composition needs its own reference
    measurements, taken on the peptide-free membrane: box area, free-membrane surface tension,
    and bilayer thickness. These are not transferable between compositions. The procedure is
-   documented at the top of `user/membranes.py`. Until they are filled in, anything that would
-   run a simulation refuses to start. `calibrate.py` does not check, because re-scoring an
-   existing result set does not touch the membranes.
-2. **Measure the calibration set.** Run a few dozen peptides with known MIC and hemolysis
-   through the pipeline with `STATE = 1` in `run.py`. Prioritise coverage of the regimes over
-   potency: an inactive peptide and a non-selective lytic one are what fix the ends of the
-   scale, and a binding-without-lysis control is what tests whether the damage observable is
-   measuring what it claims.
+   documented at the top of `user/membranes.py`. Until both the numbers are filled in and the
+   equilibrated `.gro` and `.top` are copied into place, anything that would run a simulation
+   refuses to start. Those are two separate steps and the second is the one usually missed.
+   `calibrate.py` does not check either, because re-scoring an existing result set does not
+   touch the membranes.
+2. **Measure the calibration set.** Copy `seq.txt.example` to `seq.txt` and fill it with a few
+   dozen peptides with known MIC and haemolysis, then run `STATE = 1` in `run.py`. Prioritise
+   coverage of the regimes over potency: an inactive peptide and a non-selective lytic one are
+   what fix the ends of the scale, and a binding-without-lysis control is what tests whether the
+   damage observable is measuring what it claims.
 3. **Check whether the observables separate the classes.** `calibrate.py` scores those results
    under either objective and reports pairwise concordance against the labels. This is the
    go/no-go: an optimiser cannot recover a signal that is not in the observable.
@@ -359,6 +361,17 @@ That writes `performance.png`, `composition.png`, `positional.png`, `progress.cs
 `summary.json` to `/tmp/ga_report`. If those appear, everything except GROMACS itself is
 working.
 
+Last, run the same preflight a campaign runs, which checks the external programs rather than the
+Python layer. It takes about a second and needs no membranes, so it is usable before step 1:
+
+```bash
+python -c "import run; run.preflight(membranes=False)" && echo "environment ok"
+```
+
+Silence and `environment ok` mean `gmx`, `martinize2` and `PeptideBuilder` all run. Anything
+missing is named, with the fix. Drop `membranes=False` once the membranes are prepared to check
+their files and reference values as well.
+
 ### 5. Environment variables
 
 | Variable | Purpose | Default |
@@ -524,9 +537,9 @@ With MPI, using the layout `amp-env.sh` computed:
 mpirun -np $AMP_NP python -m mpi4py run.py --output_dir calibration_run
 ```
 
-Without MPI, the same command minus `mpirun`. It runs the sequences one after another in a
-single process, which is slow but not blocked, and for a calibration set of a few dozen peptides
-that is a perfectly reasonable way to work:
+Without MPI, the same command minus `mpirun` and the `-m mpi4py` wrapper. It runs the sequences
+one after another in a single process, which is slow but not blocked, and for a calibration set
+of a few dozen peptides that is a perfectly reasonable way to work:
 
 ```bash
 export OMP_NUM_THREADS=$(python3 tools/cores.py --threads-per-rank 99 --export \
@@ -880,14 +893,20 @@ exists.
 **`UncalibratedMembrane` on startup.** Expected until step 1 is complete. The exception names
 which reference values are missing.
 
-**`martinize2: command not found`.** The virtual environment is not active, or `vermouth` is not
-installed in it. Run `source .venv/bin/activate` and `pip install vermouth`. If martinize2 lives
-somewhere else, set `export MARTINIZE2=/full/path/to/martinize2`.
+**`membrane files named in user/membranes.py are not on disk`.** The reference numbers were
+pasted in but the equilibrated system was not copied into place. These are two separate steps
+and doing only the first is easy; the message lists each missing path. The copy is the last
+thing `tools/protocol.sh` prints when it finishes.
 
-**`gmx: command not found`.** Either GROMACS is not loaded, or the binary is named something
-else. Run `module list` to see what is loaded and `which gmx gmx_mpi` to find the binary, then
-`export GMX=` whichever exists. On a machine with modules, `module load gromacs` comes first and
-has to be repeated in every new shell, which is why it belongs in `~/amp-env.sh`.
+**`required programs are missing or not runnable`.** The preflight could not run one of `gmx`,
+`martinize2` or `PeptideBuilder`, and it names which. This replaces the bare
+`gmx: command not found` and `martinize2: command not found` that used to arrive from inside the
+first candidate, minutes later and attributed to that candidate. For GROMACS: run `module list`
+to see what is loaded and `which gmx gmx_mpi` to find the binary, then `export GMX=` whichever
+exists. `module load gromacs` has to be repeated in every new shell, which is why it belongs in
+`~/amp-env.sh`. For martinize2: the virtual environment is not active or `vermouth` is not
+installed in it (`pip install vermouth`); if it lives elsewhere, set
+`export MARTINIZE2=/full/path/to/martinize2`.
 
 **`ImportError: libmpi.so.40: cannot open shared object file`.** The mpi4py wheel found no MPI
 library to link against. Load an MPI module (`module load openmpi`) and retry. If the site's MPI
@@ -896,9 +915,10 @@ has a different soname, rebuild mpi4py against it with `export MPICC=$(which mpi
 module. If none of that is available, run without MPI: both the campaign and the calibration set
 fall back to a single process.
 
-**`mpirun: command not found`.** No MPI in the environment. Drop `mpirun -np N` from the command
-and run `python run.py ...` directly. Raise `OMP_NUM_THREADS` to give the single GROMACS process
-the cores the MPI ranks would have used.
+**`mpirun: command not found`.** No MPI in the environment. Drop both `mpirun -np N` and the
+`-m mpi4py` wrapper, which only does anything under MPI, and run `python run.py ...` directly.
+Raise `OMP_NUM_THREADS` to give the single GROMACS process the cores the MPI ranks would have
+used.
 
 **`Permission denied` writing anywhere.** Everything this pipeline writes goes under the clone
 and the directories passed with `--output_dir`, so run it from a path you own, such as
@@ -1045,6 +1065,45 @@ Fixes to defects that would otherwise surface silently:
   but anyone comparing error bars with the published work should know.
 - `energygrps` was commented out in `npt.mdp`, which is why the interaction-energy terms
   referenced in the settings were never computed. Enabled; it costs no extra simulation.
+
+Faults found by auditing the error paths. The first three produced a usable-looking number from
+a broken measurement, which is the class that matters: a crash costs a restart, but a plausible
+number propagates into the calibration verdict and into the campaign that verdict authorises.
+
+- PeptideBuilder returns the **glycine** geometry for any character it does not recognise,
+  including every lowercase letter, and raises nothing. A calibration set pasted from a FASTA
+  download in lowercase ran to completion as polyglycine helices, showed no separation between
+  the known classes, and would have read as the observable having failed. Sequences are now
+  upper-cased and validated where they are read, naming the offending position.
+- `_sum_terms` skipped absent keys, so a sum of no keys returned a clean `0.0` that reached the
+  binding objective as a plausible zero interaction energy. The guard above it checked
+  `ENERGY_group_terms` against itself, a different key set from the one the sum uses, so
+  changing that setting passed the guard and zeroed the result. It now raises.
+- A `moleculetype` was costed only when a later `[section]` header followed, so the last
+  molecule in an itp contributed zero charge. Combined with the neutralisation path that is how
+  a charged system comes out looking neutral and runs without counterions, grompp's non-zero
+  charge note being inside the warning allowance. Both ends are now checked, and a total of zero
+  computed while some molecule could not be costed is refused rather than trusted.
+- The progress writer divided fitness by `ddF`, which is exactly `0.0` for a failed candidate.
+  This was latent upstream, where a failure ended the run anyway, and became reachable with the
+  failure tolerance above: one failed candidate then killed the campaign from inside a logging
+  function, after the whole generation had already been simulated.
+- Both population-initialisation loops were unbounded. Settings no draw can satisfy, such as a
+  `charge_range` the enabled residues cannot reach, pegged a core indefinitely with no output,
+  which is indistinguishable from a slow start. Bounded, and the message names the conflicting
+  settings and the acceptance rate.
+- `find_replen` assigned `repeat` and `new_seq` only inside its loop, so a sequence length no
+  `rep_lengths` entry divides raised `UnboundLocalError` mid-campaign.
+- The checkpoint was written over itself, so a kill or a full disk during the write truncated
+  the only record of a campaign that may be days old. Written to a temporary file and moved into
+  place, which is atomic; an unreadable one is now reported rather than raised as a pickle error.
+- Under MPI an unhandled exception in one rank left the master blocked in `recv` with nothing
+  printed: no traceback, no new candidates, no exit. Every documented launch now uses
+  `python -m mpi4py run.py`, whose excepthook calls `MPI_Abort`.
+- `check_exitcode` discarded the command string `run_command` had in hand, so the single most
+  travelled error path in the pipeline reported only an exit status. It now names the command,
+  the log, and the last lines of that log. `SimulationError` was raised with no message at all,
+  which is what reached the step log as an empty `error` field.
 
 Structural changes:
 

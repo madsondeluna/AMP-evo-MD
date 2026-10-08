@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1086" width="1040" height="1086" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title>AMP-evo-MD pipeline</title>
-  <desc>Three phases: membrane preparation, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds two objectives.</desc>
+  <desc>Three phases: membrane preparation, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds two objectives, and every pipeline step is logged with its duration and outcome.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -140,6 +140,13 @@
   <text x="44" y="558.0" font-size="10.5" fill="#6b6b6b">no simulation, and re-scoring a finished campaign</text>
   <text x="44" y="574.0" font-size="10.5" fill="#6b6b6b">under the other is post-processing.</text>
 
+  <!-- per-step logging: the five step names are the ones that appear in steps.jsonl -->
+  <text x="330" y="508.0" font-size="11" fill="#1a1a1a" font-weight="600">Every step is logged.</text>
+  <text x="330" y="526.0" font-size="10.5" fill="#6b6b6b">One record per step in steps.jsonl, named</text>
+  <text x="330" y="542.0" font-size="10.5" fill="#6b6b6b">build_peptide, insert, production, observables,</text>
+  <text x="330" y="558.0" font-size="10.5" fill="#6b6b6b">fitness, with its duration and outcome. On failure</text>
+  <text x="330" y="574.0" font-size="10.5" fill="#6b6b6b">the working directory is kept as failed_&lt;step&gt;/.</text>
+
   <!-- ===================== PHASE 2: CALIBRATION GATE ===================== -->
   <rect x="24" y="612.0" width="486" height="212" rx="6" fill="#ffffff" stroke="#e6e6e2" stroke-width="1"/>
   <text x="44" y="640.0" font-size="13" font-weight="600" fill="#1a1a1a">2. Calibration</text>
@@ -204,20 +211,25 @@
   <text x="982" y="876.0" font-size="11" fill="#8a8a85" text-anchor="end">tools/ga_report.py</text>
 
   <g font-size="11">
-    <rect x="44" y="896.0" width="222" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
-    <text x="155" y="917.0" text-anchor="middle" fill="#1a1a1a">fitness</text>
-    <text x="155" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">best, parent pool, population</text>
-    <text x="155" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">mean per iteration</text>
+    <rect x="44" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <text x="126" y="917.0" text-anchor="middle" fill="#1a1a1a">fitness</text>
+    <text x="126" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">best, parent pool,</text>
+    <text x="126" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">population mean</text>
 
-    <rect x="286" y="896.0" width="222" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
-    <text x="397" y="917.0" text-anchor="middle" fill="#1a1a1a">diversity</text>
-    <text x="397" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">pairwise distance and</text>
-    <text x="397" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">positional entropy</text>
+    <rect x="224" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <text x="306" y="917.0" text-anchor="middle" fill="#1a1a1a">diversity</text>
+    <text x="306" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">pairwise distance and</text>
+    <text x="306" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">positional entropy</text>
 
-    <rect x="528" y="896.0" width="222" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
-    <text x="639" y="917.0" text-anchor="middle" fill="#1a1a1a">composition</text>
-    <text x="639" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">residue groups over time,</text>
-    <text x="639" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">frequency by position</text>
+    <rect x="404" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <text x="486" y="917.0" text-anchor="middle" fill="#1a1a1a">composition</text>
+    <text x="486" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">residue groups over time,</text>
+    <text x="486" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">frequency by position</text>
+
+    <rect x="584" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <text x="666" y="917.0" text-anchor="middle" fill="#1a1a1a">timing</text>
+    <text x="666" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">per step: median, p90,</text>
+    <text x="666" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">share of wall time</text>
   </g>
 
   <text x="774" y="917.0" font-size="10.5" fill="#1a1a1a" font-weight="600">Read fitness and diversity together.</text>

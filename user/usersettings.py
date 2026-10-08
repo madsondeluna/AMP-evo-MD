@@ -359,8 +359,11 @@ path_martinize2                     = os.environ.get("MARTINIZE2", "martinize2")
 # calibrated against, where at least one terminus is usually capped. Reference 2 made the same
 # choice for the same reason.
 #
-# This changes the net charge of every peptide by up to two units relative to an uncapped one, so
-# charge_range here is the charge of the side chains alone.
+# This does NOT change the net charge. Verified against martinize2 (vermouth 0.15.0): the default
+# charges the N-terminus +1 and the C-terminus -1, so they cancel, and the same sequence comes out
+# at the same total charge either way. Only the two terminal backbone bead types change (Q5 to P6
+# in martini3001). charge_range is therefore the side-chain charge in both cases, and it does not
+# need adjusting for this setting.
 NEUTRAL_TERMINI                     = True
 
 

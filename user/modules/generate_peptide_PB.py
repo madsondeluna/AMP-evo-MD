@@ -111,8 +111,26 @@ def module_generate_peptide(simulation):
                 path_stderr=path(LocalFiles.stdout_stderr),
                 cwd=simulation._temp_dir,
             )
-        except OSError as e:
-            print("Martinize2 OSError caught")
+        except OSError as exc:
+            # Previously this was caught, printed, and execution continued into
+            # System.replace_in_file below, which then raised FileNotFoundError naming
+            # molecule_0.itp. The operator saw a missing-intermediate error rather than
+            # "martinize2 is not installed", and because neither exception is a
+            # SimulationError, run.py's retry logic did not engage either.
+            raise System.SimulationError(
+                "could not run martinize2 (%s). Check that it is on PATH or set $MARTINIZE2; "
+                "the command was: %s"
+                % (exc, UserSettings.command_martinize2(
+                    path(LocalFiles.PDB_atomistic), structure,
+                    path(LocalFiles.PDB), path(LocalFiles.TOP_martinize2))))
+
+        if not os.path.exists(path(LocalFiles.ITP_martinize2)):
+            # martinize2 can exit cleanly without producing a topology, and it writes
+            # molecule_1.itp and beyond if the input splits into several connected components,
+            # which the single-molecule template top would silently truncate.
+            raise System.SimulationError(
+                "martinize2 produced no %s. See %s for its output."
+                % (LocalFiles.ITP_martinize2, LocalFiles.stdout_stderr))
 
         System.replace_in_file(
             path(LocalFiles.ITP_martinize2),
@@ -121,6 +139,24 @@ def module_generate_peptide(simulation):
         )
 
     def restrict_BBB_angles():
+        """
+        Wrap the backbone BBB angles so an mdp can stiffen them, and copy the itp into place.
+
+        INACTIVE AS SHIPPED, and the name oversells it. The function writes both variants into
+        the topology, the stiffened one under #ifdef RESTRICT_BBB and the martinize2 originals
+        under #ifndef. Nothing defines RESTRICT_BBB: `define =` is empty in both
+        steep_pept.mdp and eq_small_dt_pept.mdp, and the token appears nowhere else in the
+        repository. So the branch that compiles is the #ifndef one, and the resulting topology
+        is functionally identical to what martinize2 produced.
+
+        To switch it on, set `define = -DRESTRICT_BBB` in the peptide mdp files. Note that this
+        affects only the short peptide-alone minimisation and equilibration, not the membrane
+        production runs, whose topology comes through the same itp but whose mdp files are in
+        user/base/production/.
+
+        Inherited from upstream. Kept because the file copy it performs is load-bearing: it is
+        what produces LocalFiles.ITP from LocalFiles.ITP_martinize2.
+        """
         data = System.read_text_file(path(LocalFiles.ITP_martinize2))
         state = False
         count = 0
@@ -134,6 +170,8 @@ def module_generate_peptide(simulation):
                     for angle in memory:
                         angle = angle.split()
                         try:
+                            # Dead branch, kept to stay byte-comparable with upstream: `memory`
+                            # holds the ORIGINAL lines, whose funct is 2, so this never fires.
                             if angle[3] == "10":
                                 angle[3] = "2"
                                 angle[-1] = "1000"

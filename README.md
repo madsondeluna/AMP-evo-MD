@@ -785,7 +785,21 @@ Fixes to defects that would otherwise surface silently:
   amphipathicity and charge constraints were dead code. Wired, and extended with a net-charge
   window and a hydrophobic-fraction cap.
 - `martinize2` was invoked through an absolute path inside one author's home directory. Now
-  resolved from `$MARTINIZE2`, defaulting to the one on `PATH`.
+  resolved from `$MARTINIZE2`, defaulting to the one on `PATH`. A failure to run it was caught,
+  printed and then ignored, so the next step raised a confusing error about a missing
+  intermediate file instead; it now raises a `SimulationError` naming the real cause, which the
+  retry logic recognises.
+- The error on the upstream fitness was propagated with the area prefactor applied to only one
+  of its four variance terms:
+
+  ```python
+  ddF_err = np.sqrt(((0.5*dA)**2 * s1**2 + s2**2 + (0.5*dA)**2_missing * s3**2 + s4**2))
+  ```
+
+  The correct form is `0.5*dA*sqrt(s1**2 + s2**2 + s3**2 + s4**2)`. With their `dA` of
+  7.012 nm2 the prefactor is 3.506, so three of the four contributions were understated by that
+  factor in sigma. This fork computes a different quantity and does not inherit the expression,
+  but anyone comparing error bars with the published work should know.
 - `energygrps` was commented out in `npt.mdp`, which is why the interaction-energy terms
   referenced in the settings were never computed. Enabled; it costs no extra simulation.
 
@@ -810,6 +824,14 @@ Note also that `delta_gamma` is positive for a peptide that relieves tension, fo
 internal convention of the original code, where fitness is maximised. The paper plots the
 corresponding quantity as negative and inverts the y axis of Fig. 2B. Do not compare values
 across the two without accounting for that.
+
+Two further conventions worth knowing before comparing any number with the literature. GROMACS
+reports `#Surf*SurfTen`, which is the surface tension multiplied by the number of interfaces,
+and a bilayer in a periodic box has two; the factor is carried through here exactly as upstream
+carried it, so the reference constants are directly comparable, but the stored `surften` is
+`2*gamma` rather than `gamma`. And `delta_gamma_work` is not the `ddF` of the source paper:
+theirs integrates over the area difference between two tension states, about 7 nm2, while this
+is an absolute interfacial work at one area of about 64 nm2.
 
 ## Requirements
 

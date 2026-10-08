@@ -21,7 +21,8 @@ Calibration procedure for each composition, run once, before any peptide:
   2. area_nm2        <- x * y of the equilibrated box (last line of the .gro)
   3. surften_free    <- gmx energy on "#Surf*SurfTen" over the same averaging window the
                         production runs use (UserSettings.ENERGY_init_time onward), as
-                        (mean, stderr) in bar
+                        (mean, stderr) in bar*nm, which is the unit of the
+                        #Surf*SurfTen column gmx energy reports, not bar
   4. thickness_nm    <- bilayer thickness (phosphate-to-phosphate, or the equivalent
                         headgroup bead distance for lipids without phosphate)
   5. b_nm            <- insertion reference depth; see the note on B_FROM_THICKNESS below
@@ -65,7 +66,9 @@ class MembraneDef:
         self.top = top
         self.role = role
         self.area_nm2 = area_nm2
-        self.surften_free = surften_free      # (mean, stderr) in bar
+        # (mean, stderr) in bar*nm, the unit of the #Surf*SurfTen column. Not bar: writing
+        # "bar" here invited dividing by the box height to "get" bar, which would be wrong.
+        self.surften_free = surften_free
         self.thickness_nm = thickness_nm
         self._b_nm = b_nm
         self.composition = composition or {}

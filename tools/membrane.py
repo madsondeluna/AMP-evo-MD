@@ -396,11 +396,11 @@ def cmd_calibrate(args):
     for res, count in sorted(head_counts.items()):
         print("#   %-6s %4d" % (res, count))
     print("# thickness      %.4f nm (head bead to head bead)" % thickness)
-    print("# surface tension %.4f +/- %.4f bar" % (gamma_mean, gamma_err))
+    print("# #Surf*SurfTen  %.4f +/- %.4f bar nm" % (gamma_mean, gamma_err))
     if abs(gamma_mean) > 3 * max(gamma_err, 1e-9) and abs(gamma_mean) > 10:
         print("#")
         print("# WARNING: the free membrane is not tensionless. The Evo-MD POPC reference sits at")
-        print("#          1.93 +/- 0.99 bar, i.e. zero within error. A large value here means the")
+        print("#          1.93 +/- 0.99 bar nm, i.e. zero within error. A large value here means the")
         print("#          constant-area box was not set to this composition's equilibrium area,")
         print("#          so every peptide will be evaluated against a pre-stressed bilayer.")
         print("#          Re-run the semi-isotropic equilibration and re-plan the lipid count.")

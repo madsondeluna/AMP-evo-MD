@@ -9,15 +9,27 @@ post-processing step on the JSON files rather than a second set of simulations.
 
 Per membrane the following are recorded:
 
-  surften        surface tension of the system with peptide, kJ mol-1 nm-2
-  delta_gamma    gamma(free) - gamma(with peptide), kJ mol-1 nm-2
+  surften        the #Surf*SurfTen column of the system with peptide, converted to
+                 kJ mol-1 nm-2. Note that GROMACS reports the surface tension multiplied by
+                 the number of interfaces, and a bilayer in a periodic box has two, so this is
+                 2*gamma rather than gamma. The factor is carried through consistently and
+                 matches the upstream convention, so the reference constants and the published
+                 values are directly comparable; it is named here rather than divided out
+                 because dividing would break that comparability.
+  delta_gamma    surften(free) - surften(with peptide), kJ mol-1 nm-2
                  Positive means the peptide relieves tension in the leaflet it occupies.
                  At constant area that is the same statement as the peptide generating
                  leaflet strain, which is the mechanical step upstream of pore formation.
   delta_gamma_work
-                 delta_gamma * area, kJ mol-1. The work-equivalent, for comparison with the
-                 free energies in the literature; delta_gamma itself is intensive and is what
-                 the objectives use.
+                 delta_gamma * area, kJ mol-1. Because delta_gamma already carries the factor
+                 of two for the two interfaces, this is the change in the total interfacial
+                 free energy of the box, which is a legitimate work-equivalent.
+
+                 It is NOT comparable to the ddF of van Hilten et al. Theirs is a trapezoidal
+                 integral of delta_gamma over the area DIFFERENCE between two tension states
+                 (dA about 7 nm2); this is an absolute interfacial work at one area (about
+                 64 nm2), so it is roughly an order of magnitude larger and means something
+                 else. delta_gamma itself is intensive and is what the objectives use.
   e_lipids       Coul-SR + LJ-SR between peptide and lipids, kJ mol-1
   e_solvent      Coul-SR + LJ-SR between peptide and solvent, kJ mol-1
   d_mem          centre-of-mass distance between peptide and membrane along z, nm
@@ -204,6 +216,9 @@ def module_compute_observables(simulation):
         surften, surften_err = read_surften()
         gamma_free, gamma_free_err = membrane.surften_free_converted()
 
+        # Both terms carry the same n_surf factor, so it cancels in the difference as long as
+        # the peptide perturbs one leaflet only. That is what the orientation factor enforces:
+        # a transmembrane configuration would break the cancellation, and it is scored zero.
         delta_gamma = gamma_free - surften
         delta_gamma_err = float(np.sqrt(gamma_free_err ** 2 + surften_err ** 2))
 
@@ -297,7 +312,15 @@ def _parse_energy_terms(path_output, wanted):
 
 
 def _sum_terms(terms, keys):
-    """Sum a set of energy terms, propagating their errors in quadrature."""
+    """
+    Sum a set of energy terms, combining their errors in quadrature.
+
+    Quadrature assumes the terms are independent, and Coul-SR and LJ-SR for the same group pair
+    are not: they come from the same frames and are anticorrelated, so this understates the error
+    on the sum. Summing frame by frame before averaging would be correct. Left as is because the
+    binding objective uses the mean and not the error, but the reported error should not be
+    quoted as if it were rigorous.
+    """
     total = 0.0
     var = 0.0
     for key in keys:

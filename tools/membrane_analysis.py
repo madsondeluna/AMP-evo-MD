@@ -80,7 +80,15 @@ def analyse_one(name, directory, equil_fraction=0.5):
 
     t_eq, gamma_eq = mdtools.tail(time, gamma, equil_fraction)
     gamma_mean, gamma_err = mdtools.block_average(gamma_eq)
-    result["surften"] = {"mean": gamma_mean, "err": gamma_err, "units": "bar"}
+    # Block-averaged, which is the right estimator for a correlated series, but NOT the one that
+    # ends up in the MembraneDef: tools/membrane.py takes gmx energy's own autocorrelation-based
+    # Err.Est., and the production runs take the same. Mixing the two would make delta_gamma_err
+    # a quadrature sum of two different estimators. This value is a diagnostic for the
+    # equilibration verdict below; the canonical reference constant comes from
+    # `tools/membrane.py calibrate`.
+    # bar*nm: the unit of the #Surf*SurfTen column, which is the surface tension times
+    # the number of interfaces. Not bar.
+    result["surften"] = {"mean": gamma_mean, "err": gamma_err, "units": "bar*nm"}
     result["surften_drift"] = mdtools.drift(t_eq, gamma_eq)
     result["time"] = {"start": float(time[0]), "end": float(time[-1]),
                       "analysed_from": float(t_eq[0])}
@@ -88,7 +96,11 @@ def analyse_one(name, directory, equil_fraction=0.5):
     if area is not None:
         t_eq_a, area_eq = mdtools.tail(time, area, equil_fraction)
         area_mean, area_err = mdtools.block_average(area_eq)
-        result["area"] = {"mean": area_mean, "err": area_err, "units": "nm2"}
+        # Time average over the equilibration, which is a drift diagnostic. It is NOT the area
+        # the production run is held at: that is box.x * box.y of the final structure, which is
+        # what tools/membrane.py calibrate reads and writes into the MembraneDef.
+        result["area"] = {"mean": area_mean, "err": area_err, "units": "nm2",
+                          "note": "time average, diagnostic only; the held area is box.x*box.y"}
         # Drift expressed over the analysed window, which is what matters: a slope that is
         # negligible per picosecond can still be a percent of the area over 100 ns.
         slope = mdtools.drift(t_eq_a, area_eq)
@@ -174,7 +186,7 @@ def figure_single(result, outpath):
     ax.plot(s["time"], s["gamma"], color=mdtools.CATEGORICAL[0], lw=0.8)
     ax.axhline(0, color=mdtools.GRID, lw=0.8)
     ax.axvspan(s["time"][0], start, color=mdtools.GRID, alpha=0.3, lw=0)
-    ax.set_ylabel("surface tension (bar)")
+    ax.set_ylabel("#Surf*SurfTen (bar nm)")
     ax.set_title("%s: free membrane" % result["name"])
     ax.annotate("discarded", xy=(start, ax.get_ylim()[1]), xytext=(-4, -10),
                 textcoords="offset points", ha="right", fontsize=7,
@@ -214,7 +226,7 @@ def figure_compare(results, outpath):
         ax.plot(s["time"], s["gamma"], color=colour, lw=0.8)
         mdtools.label_last(ax, s["time"], s["gamma"], r["name"], colour)
     ax.axhline(0, color=mdtools.GRID, lw=0.8)
-    ax.set_title("Surface tension (bar)")
+    ax.set_title("#Surf*SurfTen (bar nm)")
     ax.set_xlabel("time (ps)")
     mdtools.declutter(ax)
 
@@ -237,7 +249,7 @@ def figure_compare(results, outpath):
     ax.set_yticks(ypos)
     ax.set_yticklabels(names)
     ax.set_ylim(-0.6, len(results) - 0.4)
-    ax.set_title("Equilibrium surface tension (bar)")
+    ax.set_title("Equilibrium #Surf*SurfTen (bar nm)")
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0)
     span = max(abs(v) + e for v, e in zip(values, errors)) * 2.2
@@ -265,7 +277,7 @@ def figure_compare(results, outpath):
 
 
 def print_table(results):
-    header = ("membrane", "area nm2", "APL nm2", "thickness", "gamma bar", "err", "lipids")
+    header = ("membrane", "area nm2", "APL nm2", "thickness", "surf bar nm", "err", "lipids")
     print("  " + "  ".join("%11s" % h for h in header))
     for r in results:
         print("  " + "  ".join([
@@ -293,7 +305,10 @@ def main():
     s.add_argument("--name", required=True)
     s.add_argument("--dir", required=True)
     s.add_argument("--equil-fraction", type=float, default=0.5,
-                   help="fraction of the trajectory kept for averaging (default 0.5)")
+                   help="fraction of the trajectory kept for averaging (default 0.5). This is "
+                        "the diagnostic window; the reference constant that reaches the "
+                        "MembraneDef is averaged by tools/membrane.py over the window the "
+                        "production runs use (UserSettings.ENERGY_init_fraction)")
     s.add_argument("--outdir", default=None)
 
     c = sub.add_parser("compare", help="compare several membranes")

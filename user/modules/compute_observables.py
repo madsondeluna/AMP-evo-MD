@@ -321,11 +321,23 @@ def _sum_terms(terms, keys):
     binding objective uses the mean and not the error, but the reported error should not be
     quoted as if it were rigorous.
     """
+    # Skipping a missing key used to produce a partial sum, and a sum of no keys produced a
+    # clean 0.0 that reaches the binding objective as a perfectly plausible zero interaction
+    # energy. The guard upstream checks ENERGY_group_terms against itself, which is a different
+    # key set from the ones passed here, so changing ENERGY_group_terms (to the two-peptide
+    # variant, say) passed that check and silently zeroed this one. Half a sum is worse than no
+    # sum, because nothing downstream can tell the difference.
+    missing = [key for key in keys if key not in terms]
+    if missing:
+        raise KeyError(
+            "cannot sum the interaction energy: %s absent from the parsed gmx energy output. "
+            "Found: %s. These names come from energygrps in the production .mdp and from "
+            "UserSettings.ENERGY_group_terms; the two have to agree."
+            % (", ".join(missing), ", ".join(sorted(terms)) or "nothing"))
+
     total = 0.0
     var = 0.0
     for key in keys:
-        if key not in terms:
-            continue
         mean, err = terms[key]
         total += mean
         var += err ** 2

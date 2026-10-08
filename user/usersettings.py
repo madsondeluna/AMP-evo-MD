@@ -44,7 +44,13 @@ if ff == "martini22":
 elif ff == "martini3001":
     template_top                        = "template_m3001.top"
 else:
-    print("Force field selection not supported")
+    # Printing and continuing left template_top undefined, and the failure then arrived much
+    # later and somewhere else, as "AttributeError: module 'user.usersettings' has no attribute
+    # 'template_top'" from inside the peptide build of the first candidate.
+    raise SystemExit(
+        "user/usersettings.py: ff = %r is not supported. Expected 'martini22' or "
+        "'martini3001'. This selects the topology template the peptide build starts from, so "
+        "nothing can run without it." % (ff,))
 #filename_NVT_peptide_MDP            = "nvt_peptide.mdp"
 filename_MDP_steep_pept             = "steep_pept.mdp"
 filename_MDP_eq_pept                = "eq_small_dt_pept.mdp"

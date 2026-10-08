@@ -150,9 +150,51 @@ def copy_dir_files(src_dir, dest_dir):
         if os.path.isfile(filepath):
             shutil.copy(filepath, dest_dir)
 
-def check_exitcode(exitcode):
-    if not exitcode == 0:
-        sys.exit(exitcode)
+def _tail(path, n_lines=20):
+    """Last few lines of a log, for quoting into an error message."""
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rt", errors="replace") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+    return "".join(lines[-n_lines:]).rstrip() or None
+
+
+def check_exitcode(exitcode, command=None, path_stdout=None, path_stderr=None):
+    """
+    Stop on a non-zero exit, naming the command and where its output went.
+
+    This is the single most travelled error path in the pipeline: every grompp, editconf,
+    energy, distance, genion and trjconv goes through it. It used to be a bare sys.exit, which
+    discarded the command string that run_command had in hand. What reached the operator was
+    run.py reporting that some command in some step had exited non-zero for a given candidate,
+    leaving them to find the right stdout_stderr.log among a few hundred candidate directories
+    and then to work out which of the fifteen or so commands in that file was the one that died.
+    """
+    if exitcode == 0:
+        return
+
+    if command is not None:
+        detail = ["", "=" * 78, "A command exited with status %s." % exitcode,
+                  "  command: %s" % command]
+        for label, path in (("stdout", path_stdout), ("stderr", path_stderr)):
+            if path:
+                detail.append("  %s:  %s" % (label, os.path.abspath(path)))
+
+        # GROMACS puts the reason on the last few lines; quoting them here saves the operator
+        # from opening the log at all in the common cases (a missing index group, an undefined
+        # atom type, a file that was never written).
+        tail = _tail(path_stderr) or _tail(path_stdout)
+        if tail:
+            detail.append("  last lines of that output:")
+            detail.extend("    " + line for line in tail.split("\n"))
+        detail.append("=" * 78)
+        sys.stderr.write("\n".join(detail) + "\n")
+        sys.stderr.flush()
+
+    sys.exit(exitcode)
 
 ################
 ## SUBPROCESS ##
@@ -172,7 +214,7 @@ def run_command(command, tTimeout=None, input=None, path_stdout=None, path_stder
     with hdlOut as out, hdlErr as err:
         returncode = _Process.run(command, stdout=out, stderr=err, timeout=tTimeout, input=input, cwd=cwd)
 
-    check_exitcode(returncode)
+    check_exitcode(returncode, command=command, path_stdout=path_stdout, path_stderr=path_stderr)
 
 # def run_command_tmpdir(command, tmpdir, tTimeout=None, input=None, path_stdout=None, path_stderr=None):
 #     hdlOut = _try_open(path_stdout, 'at')
@@ -187,9 +229,24 @@ class SimulationError(Exception):
     """ Should be raised when a GROMACS MDRUN call exits with an error."""
     pass
 
-def _sim_check_exitcode(exitcode):
-    if not exitcode == 0:
-        raise SimulationError
+def _sim_check_exitcode(exitcode, command=None, path_stdout=None, path_stderr=None):
+    if exitcode == 0:
+        return
+
+    # This exception used to be raised with no message at all, which is what reached the step log
+    # as an empty "error" field, and what the retry loop in run.py printed as a bare "Simulation
+    # stopped due to an error." An mdrun failure is almost always legible from the last lines of
+    # its own log, so they are carried in the exception rather than left on disk.
+    parts = ["mdrun exited with status %s" % exitcode]
+    if command:
+        parts.append("command: %s" % command)
+    for label, path in (("stdout", path_stdout), ("stderr", path_stderr)):
+        if path:
+            parts.append("%s: %s" % (label, os.path.abspath(path)))
+    tail = _tail(path_stderr, 12) or _tail(path_stdout, 12)
+    if tail:
+        parts.append("last lines of that output:\n" + tail)
+    raise SimulationError("\n".join(parts))
 
 def run_simulation_command(command, tTimeout=None, path_stdout=None, path_stderr=None):
     hdlOut = _try_open(path_stdout, 'at')
@@ -198,5 +255,6 @@ def run_simulation_command(command, tTimeout=None, path_stdout=None, path_stderr
     with hdlOut as out, hdlErr as err:
         returncode = _Process.run(command, stdout=out, stderr=err, timeout=tTimeout)
 
-    _sim_check_exitcode(returncode)
+    _sim_check_exitcode(returncode, command=command,
+                        path_stdout=path_stdout, path_stderr=path_stderr)
 

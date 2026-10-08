@@ -133,5 +133,16 @@ class Simulation():
             self._log.event("finish", status="ok")
 
     def get_output_variable(self, key):
-        return self._output_variables[key]
+        try:
+            return self._output_variables[key]
+        except KeyError:
+            # Reached when a module returned without publishing what the caller expects, which
+            # happens on a partial edit to the module chain. A bare KeyError: 'fitness' names
+            # neither the candidate nor the module that was supposed to set it.
+            raise KeyError(
+                "no output variable %r was produced for sequence %s in %s. Published: %s. "
+                "The module that sets it is the last one in the chain; check that it ran and "
+                "that it called set_output_variable."
+                % (key, self._sequence or "(unknown)", self._output_dir,
+                   ", ".join(sorted(self._output_variables)) or "nothing"))
 

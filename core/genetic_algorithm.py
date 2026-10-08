@@ -1,4 +1,5 @@
 import sys
+import os
 import pickle
 import user.usersettings as UserSettings
 import numpy as np
@@ -321,6 +322,13 @@ class _StringChromosome:
 
     def find_replen(self): # find the minimal repeated block length
         rep_len_list = UserSettings.rep_lengths
+        # Initialised to the no-repeat case. Both were previously assigned only inside the loop
+        # body, so a sequence whose length is not divisible by any entry in rep_lengths reached
+        # the assignment below with nothing bound and died mid-campaign as "UnboundLocalError:
+        # cannot access local variable 'new_seq'". That is reachable by editing rep_lengths, and
+        # by restarting from a checkpoint written under different settings.
+        repeat = 1
+        new_seq = self.sequence
         for l in rep_len_list:
             if len(self.sequence) % l != 0:
                 continue
@@ -401,19 +409,73 @@ class _Population:
 
         population_size = ptr_genetic_algorithm.population_size
 
+        # Both loops below used to be unbounded. Neither can make progress when the settings are
+        # mutually incompatible, and the symptom is identical to a slow start: the last thing
+        # printed is "Checking settings and initializing the genetic algorithm.." and then a
+        # pegged core, indefinitely, with no further output. Two realistic ways in: a charge
+        # window tightened past what the enabled residues can reach, so the constraint rejects
+        # essentially every draw; and a rep_lengths entry larger than max_length, so no repeat
+        # count satisfies the inner condition.
+        max_attempts = 1000 * max(population_size, 1)
+        attempts = 0
+        rejected_by = {}
+
         while len(self.population) < population_size:
+            attempts += 1
+            if attempts > max_attempts:
+                import core.errors as Errors
+                Errors.fail(
+                    "could not build the initial population: %d of %d sequences after %d draws"
+                    % (len(self.population), population_size, attempts),
+                    where="core/genetic_algorithm.py, population initialisation",
+                    why=("every draw was rejected by the constraints, so the search space the "
+                         "settings describe is empty or nearly so.\n"
+                         "charge_range = %s, and the residues with a non-zero propensity are %s\n"
+                         "rep_lengths = %s, repeats = %s, min_length = %s, max_length = %s"
+                         % (UserSettings.charge_range,
+                            "".join(sorted(a for a, p in UserSettings.propensities.items()
+                                           if p > 0)) or "(none)",
+                            UserSettings.rep_lengths, UserSettings.repeats,
+                            UserSettings.min_length, UserSettings.max_length)),
+                    fix=("widen charge_range, or enable more cationic residues (K, R) in "
+                         "propensities, or relax the length settings, in user/usersettings.py"))
+
             repeat = 1000
             replen = self.random.choice(UserSettings.rep_lengths)
+            inner = 0
             while replen * repeat > UserSettings.max_length:
+                inner += 1
+                if inner > 10000:
+                    import core.errors as Errors
+                    Errors.fail(
+                        "no repeat count can fit a block of %d residues into max_length %d"
+                        % (replen, UserSettings.max_length),
+                        where="core/genetic_algorithm.py, population initialisation",
+                        why=("sequences are built as a block of rep_lengths repeated a number "
+                             "of times drawn from repeats, and every value in repeats = %s "
+                             "overshoots max_length = %d for this block length"
+                             % (UserSettings.repeats, UserSettings.max_length)),
+                        fix=("in user/usersettings.py make max_length at least the largest "
+                             "rep_lengths entry (%s), or add a smaller value to repeats"
+                             % max(UserSettings.rep_lengths)))
                 repeat = self.random.choice(UserSettings.repeats)
+
             if UserSettings.propensities_initial:
                 initial_sequence = self.__generate_sequence_propensities(replen, UserSettings.propensities)
             else:
                 initial_sequence = self.__generate_sequence(replen)
             if self.ptr_genetic_algorithm.ptr_constraint_function(initial_sequence*repeat):
+                rejected_by["constraint"] = rejected_by.get("constraint", 0) + 1
                 continue
 
             self.population.add(_StringChromosome(initial_sequence*repeat))
+
+        if attempts > 2 * population_size:
+            # Not an error, but the acceptance rate is the one number that says how close the
+            # settings are to the empty-search-space failure above.
+            mprint("Initial population: %d sequences accepted from %d draws (%.0f%%). A low rate "
+                   "means the constraints and the propensities are close to incompatible."
+                   % (population_size, attempts, 100.0 * population_size / attempts))
 
     def __iter__(self):
         return _Population._iterator(self.population)
@@ -427,17 +489,49 @@ class _Population:
 
         filepath_checkpoint = self.ptr_genetic_algorithm.filepath_checkpoint
         if filepath_checkpoint is not None:
-            with open(filepath_checkpoint, 'wb') as file:
+            # Written to a temporary file and moved into place, because this overwrites the only
+            # record of a campaign that may be days old. A kill or a full disk during the write
+            # used to truncate it, and the next --restart then failed on a half-written pickle
+            # with nothing to fall back to. os.replace is atomic within a filesystem, so the
+            # checkpoint on disk is always either the previous generation or this one.
+            temporary = filepath_checkpoint + ".tmp"
+            with open(temporary, 'wb') as file:
                 pickle.dump(pickle_data, file, pickle.DEFAULT_PROTOCOL)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary, filepath_checkpoint)
     
     def read_checkpoint_file(self, filepath_checkpoint):
-        with open(filepath_checkpoint, 'rb') as file:
-            (chromosome_pool, n_run_dict, population) = pickle.load(file)
+        import core.errors as Errors
 
-            self.chromosome_pool = chromosome_pool
-            self.n_run_dict = n_run_dict
-            self.population = population
- 
+        Errors.require_file(
+            filepath_checkpoint,
+            why=("--restart resumes a campaign from the checkpoint the genetic algorithm "
+                 "writes after every generation"),
+            fix=("point --restart at the checkpoint in the output directory of the run you "
+                 "want to continue, or drop --restart to start a new campaign"))
+
+        try:
+            with open(filepath_checkpoint, 'rb') as file:
+                (chromosome_pool, n_run_dict, population) = pickle.load(file)
+        except Exception as exc:
+            # Anything unpickling raises here means the file is not a usable checkpoint. The
+            # distinction worth drawing for the operator is between a truncated file, which is
+            # what a kill during the write produces, and the wrong file entirely.
+            Errors.fail("the checkpoint could not be read (%s: %s)" % (type(exc).__name__, exc),
+                        where=os.path.abspath(filepath_checkpoint),
+                        why=("it is either truncated, which is what a kill or a full disk "
+                             "during the write leaves behind, or it is not a checkpoint"),
+                        fix=("check the file size against the other campaigns' checkpoints; if "
+                             "it is truncated the generation it was written for is lost and the "
+                             "campaign has to restart from the last good checkpoint"))
+
+        self.chromosome_pool = chromosome_pool
+        self.n_run_dict = n_run_dict
+        self.population = population
+        mprint("Restarted from %s: %d sequences already evaluated, population of %d."
+               % (os.path.abspath(filepath_checkpoint), len(chromosome_pool), len(population)))
+
     def evaluate_fitness(self):
         # Simulate #
         self.simulation_buffer.add(self.population)
@@ -855,7 +949,16 @@ class GeneticAlgorithm:
             data.append(datetime.now().strftime("%Y/%m/%d %H:%M:%S"))
 
             for index in sorted_data:
-                data.append(body_string(index[0], str(index[1][0]) + "\tddF=" + str(index[1][1]) + "\tpenalty=" + str(index[1][0]/index[1][1]) + "\tn_run=" + str(n_run_dict[index[0]]) ))
+                fitness, ddF = index[1][0], index[1][1]
+                # ddF is exactly 0.0 for a failed evaluation (run.py returns [WORST_FITNESS, 0.0])
+                # and can be 0.0 for a candidate that simply did not perturb the membrane. This
+                # division used to be unguarded, which turned one failed candidate into a
+                # ZeroDivisionError here, in the progress writer, after the whole generation had
+                # already been simulated. That defeated the entire failure-tolerance design in
+                # run.py and discarded a generation of GROMACS time, with a traceback pointing at
+                # logging code that looks unrelated to the failure.
+                penalty = (fitness / ddF) if ddF else float("nan")
+                data.append(body_string(index[0], str(fitness) + "\tddF=" + str(ddF) + "\tpenalty=" + str(penalty) + "\tn_run=" + str(n_run_dict[index[0]]) ))
 
             data.append(footer_string())
 

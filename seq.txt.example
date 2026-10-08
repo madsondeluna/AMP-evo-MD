@@ -1,0 +1,58 @@
+# Calibration set. Copy this file to seq.txt and replace the entries with your own.
+#
+#   cp seq.txt.example seq.txt
+#
+# One sequence per line, one-letter residue codes, upper or lower case. Blank lines and
+# anything after a # are ignored. run.py reads this file when STATE = 1.
+#
+# WHAT THIS FILE IS FOR
+#
+# These peptides are not candidates and they are not seeds. They are the measurement that
+# decides whether the rest of the pipeline means anything: peptides whose behaviour is already
+# known experimentally, run through exactly the same modules, membranes and sampling as the
+# campaign. If the observables do not separate the known classes, no optimiser can recover a
+# signal that is not there, and the answer is to revisit the observable, the membranes or the
+# imposed-helix assumption rather than to start a campaign.
+#
+# Aim for four classes, several peptides each, so that a class boundary is a boundary and not
+# one point:
+#
+#   inactive              no activity against the target at reachable concentrations
+#   selective             active on the target, little haemolysis
+#   lytic                 active on both target and host (melittin-like)
+#   binds without lysing  partitions into the membrane without permeabilising it
+#
+# The last class is the one that is usually left out and the one that matters most here. Both
+# objectives are membrane-interaction observables, so a peptide that binds strongly and does
+# nothing is exactly what a binding score can mistake for a hit. Without such peptides in the
+# set, the calibration cannot show whether the observable distinguishes them.
+#
+# CHOOSING THEM
+#
+# Take the sequences from the primary literature or from a curated database (DRAMP, APD3,
+# DBAASP), not from memory and not from this file, and record the MIC and haemolysis values and
+# their source alongside your own copy. Keep the length range close to the campaign's
+# (user/usersettings.py: min_length, max_length), because a 13-mer and a 37-mer are not
+# comparable under a fixed box and a fixed imposed helix.
+#
+# A note on what the force field can represent: the all-H secondary structure handed to
+# martinize2 means every peptide here is simulated as a helix whether or not it is one.
+# Disulfide-stabilised and beta-sheet peptides (defensins, protegrins) will be misrepresented,
+# and a proline-rich peptide bent in reality will be built straight. Including them is useful
+# only as a deliberate test of that assumption, not as part of the ranking.
+
+# Example of the format. Magainin 2, a selective alpha-helical AMP, is left here as a syntax
+# example only: one peptide is not a calibration set, and this line should be replaced.
+GIGKFLHSAKKFGKAFVGEIMNS
+
+# inactive
+# <sequence>   # name, MIC, source
+
+# selective
+# <sequence>   # name, MIC, haemolysis, source
+
+# lytic
+# <sequence>   # name, MIC, haemolysis, source
+
+# binds without lysing
+# <sequence>   # name, evidence of partitioning without permeabilisation, source

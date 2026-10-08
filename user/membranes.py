@@ -204,3 +204,37 @@ def require_all_calibrated():
     """Fail before the first simulation rather than after it."""
     for name in membrane_names():
         MEMBRANES[name].require_calibrated()
+
+
+def require_all_built():
+    """
+    Check that the structure and topology each MembraneDef names are actually on disk.
+
+    require_all_calibrated above checks the four reference numbers, which the operator types in
+    by hand from the protocol output. It does not check that the equilibrated system those
+    numbers describe was ever copied into place, and the two are separate steps that are easy to
+    do one of. Without this, the first thing that reads the file is insert_peptide_nmem, long
+    after the peptide has been built, and it reports a path inside a temporary directory that no
+    longer exists by the time anyone looks:
+
+        FileNotFoundError: '/tmp/tmpk3x9r2a1/membrane_bacterial.gro'
+
+    which names neither the membrane nor the directory the file belongs in.
+    """
+    import core.errors as Errors
+
+    missing = []
+    for name in membrane_names():
+        membrane = MEMBRANES[name]
+        for kind, path in (("structure", membrane.gro_path()), ("topology", membrane.top_path())):
+            if not os.path.isfile(path):
+                missing.append("%s (%s of membrane %r)" % (path, kind, name))
+
+    if missing:
+        Errors.fail("membrane files named in user/membranes.py are not on disk",
+                    where="\n".join(missing),
+                    why=("the reference measurements for these membranes are filled in, so the "
+                         "equilibrated system they describe was built, but it was not copied "
+                         "into place"),
+                    fix=("copy the equilibrated .gro and .top there; this is the last step "
+                         "tools/protocol.sh prints when it finishes"))

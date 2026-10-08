@@ -32,6 +32,7 @@ import json
 import os
 import sys
 
+import core.errors as Errors
 import user.usersettings as UserSettings
 from user.modules.compute_fitness import score_observables
 
@@ -56,8 +57,19 @@ def find_results(root):
     for dirpath, _dirnames, filenames in os.walk(root):
         if "observables.json" not in filenames:
             continue
-        with open(os.path.join(dirpath, "observables.json")) as handle:
-            observables = json.load(handle)
+        path = os.path.join(dirpath, "observables.json")
+        try:
+            with open(path) as handle:
+                observables = json.load(handle)
+        except ValueError as exc:
+            # A candidate killed mid-write leaves a partial file. Walking hundreds of
+            # directories, the bare JSONDecodeError names a line and column of an unnamed file.
+            Errors.fail("observables.json is not valid JSON (%s)" % exc,
+                        where=os.path.abspath(path),
+                        why=("it was most likely truncated by a kill while it was being "
+                             "written, so this candidate has no usable measurement"),
+                        fix=("delete this candidate directory and re-run that sequence, or "
+                             "exclude it and re-run calibrate.py"))
         sequence = read_sequence(dirpath)
         yield sequence, observables, dirpath
 
@@ -74,15 +86,48 @@ def read_sequence(dirpath):
 
 
 def load_labels(path):
+    Errors.require_file(
+        path,
+        why="the labels say which experimental class each calibration peptide belongs to",
+        fix="write a CSV with a header line: sequence,class")
+
     labels = {}
     with open(path, newline="") as handle:
-        for row in csv.DictReader(handle):
-            seq = row["sequence"].strip().upper()
-            cls = row["class"].strip().lower()
+        reader = csv.DictReader(handle)
+
+        # Checked once, before the rows, because the failure mode otherwise is a KeyError on
+        # the first row that names the missing column but not the file, and the three usual
+        # causes (no header line, different column names, semicolon delimiter) all look the same
+        # from there.
+        fields = [name.strip().lower() for name in (reader.fieldnames or [])]
+        missing = [name for name in ("sequence", "class") if name not in fields]
+        if missing:
+            Errors.fail("the labels file is missing the column(s): %s" % ", ".join(missing),
+                        where="%s\nheader read as: %s"
+                              % (os.path.abspath(path),
+                                 ", ".join(reader.fieldnames or []) or "(no header line)"),
+                        why=("it is read as a CSV with a header naming at least 'sequence' and "
+                             "'class'. A file with no header, or one separated by semicolons "
+                             "or tabs, reads as a single unnamed column."),
+                        fix="first line: sequence,class")
+
+        for number, row in enumerate(reader, start=2):
+            seq = (row.get("sequence") or "").strip().upper()
+            cls = (row.get("class") or "").strip().lower()
+            if not seq:
+                continue
             if cls not in CLASS_NAMES:
-                sys.exit("Unknown class %r for %s; expected one of %s"
-                         % (cls, seq, ", ".join(CLASS_NAMES)))
+                Errors.fail("unknown class %r for %s" % (cls, seq),
+                            where="%s, line %d" % (os.path.abspath(path), number),
+                            why="the class decides which side of a comparison a peptide is on",
+                            fix="use one of: %s" % ", ".join(CLASS_NAMES))
             labels[seq] = cls
+
+    if not labels:
+        Errors.fail("no labels were read from %s" % os.path.basename(path),
+                    where=os.path.abspath(path),
+                    why="the file has a usable header but no data rows",
+                    fix="add one row per labelled peptide: SEQUENCE,class")
     return labels
 
 
@@ -168,6 +213,28 @@ def main():
         print("  Surface tension is build-sensitive, so the values are not directly")
         print("  comparable across them. Re-run the minority set under the pinned build.")
         print()
+
+    # How many of the supplied labels actually found a result, and the reverse. A label that
+    # matches nothing is silently dropped, and the concordance below is then computed over
+    # whatever subset happened to line up, printed with the same confidence as a full one. The
+    # usual cause is that the calibration run names its directories SEQUENCE + rank + "_" +
+    # count, so a candidate whose input.seq is missing reports a "sequence" like KWLRK0_3 that
+    # can never match a label.
+    if labels:
+        matched = {r["sequence"].upper() for r in rows if r["class"]}
+        unmatched_labels = sorted(set(labels) - matched)
+        unlabelled_rows = sorted(r["sequence"] for r in rows if not r["class"])
+        print("labels    = %d supplied, %d matched a result" % (len(labels), len(matched)))
+        if unmatched_labels:
+            print("  %d label(s) matched nothing: %s%s"
+                  % (len(unmatched_labels), ", ".join(unmatched_labels[:5]),
+                     "" if len(unmatched_labels) <= 5 else ", ..."))
+        if unlabelled_rows:
+            print("  %d result(s) have no label: %s%s"
+                  % (len(unlabelled_rows), ", ".join(s[:26] for s in unlabelled_rows[:5]),
+                     "" if len(unlabelled_rows) <= 5 else ", ..."))
+        if unmatched_labels or unlabelled_rows:
+            print("  Everything below is computed on the %d matched peptides only." % len(matched))
 
     objective = args.objective or UserSettings.OBJECTIVE
     print("objective = %s" % objective)

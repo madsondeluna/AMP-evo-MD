@@ -5,7 +5,7 @@ Track a running or finished campaign: optimiser performance, population diversit
 Reads the progress file the genetic algorithm appends to as it runs, so it can be pointed at a
 campaign in flight. Writes a per-iteration CSV, a summary table to stdout, and three figures.
 
-    python tools/ga_report.py output/progress.txt --outdir report/
+    python tools/ga_report.py <campaign_dir>/output.txt --outdir report/
 
 WHY DIVERSITY IS TRACKED ALONGSIDE FITNESS
 ------------------------------------------
@@ -75,6 +75,21 @@ def parse_progress(path):
     are counted and reported rather than silently dropped: a changed output format should be
     visible, not inferred from a suspiciously empty plot.
     """
+    if not os.path.isfile(path):
+        # This tool is pointed at a campaign by hand, often while it is running, so a wrong
+        # path is the most likely way to use it wrongly. Name what was expected rather than
+        # letting a FileNotFoundError traceback stand in for it.
+        hint = ""
+        parent = os.path.dirname(os.path.abspath(path)) or "."
+        if os.path.isdir(parent):
+            candidates = sorted(name for name in os.listdir(parent)
+                                if name.endswith(".txt") or name == "output.txt")
+            if candidates:
+                hint = "\n.txt files in %s: %s" % (parent, ", ".join(candidates[:10]))
+        sys.exit("No such progress file: %s\n"
+                 "The genetic algorithm writes it as output.txt in the campaign's output "
+                 "directory (core.settings.name_output_progress).%s" % (os.path.abspath(path), hint))
+
     settings = {}
     iterations = collections.OrderedDict()
     current = None

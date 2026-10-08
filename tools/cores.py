@@ -175,7 +175,12 @@ def main():
     print()
     print("Run with")
     print("  export OMP_NUM_THREADS=%d" % p["threads"])
-    print("  mpirun -np %d python run.py --output_dir <dir>" % p["ranks"])
+    # python -m mpi4py, not plain python. The wrapper installs an excepthook that calls
+    # MPI_Abort, so an unhandled exception in one rank ends the job. Without it the rank dies
+    # quietly and the master stays blocked in recv: no traceback, no new candidates, no exit,
+    # indistinguishable from a slow simulation for as long as nobody looks. On an unattended
+    # run that is routinely a weekend.
+    print("  mpirun -np %d python -m mpi4py run.py --output_dir <dir>" % p["ranks"])
     print()
     if p["ranks"] == 1:
         print("  Only one rank fits. Without MPI, drop mpirun and raise OMP_NUM_THREADS to")

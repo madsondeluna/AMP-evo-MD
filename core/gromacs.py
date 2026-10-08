@@ -6,6 +6,7 @@ from    contextlib  import suppress
 from    bisect      import bisect_left, bisect_right
 import  functools
 import os
+import sys
 
 import  core.system  as system
 #import  user.seq2itp_aminoacids as seq2itp
@@ -54,6 +55,13 @@ def TOP_get_system_charge(filepath_TOP, TOP_itp_directory_list=[]):
                     current_molecule = Molecule(line.split()[0])
                 elif state == ITP_ATOMS_SECTION:
                     current_molecule.charge += round(float(line.split()[6]))
+
+            # A molecule was only ever committed when a LATER [section] header appeared, so the
+            # last molecule in a file whose [ atoms ] runs to the end of the file was dropped and
+            # silently contributed zero charge to the system. Ion itps in particular tend to end
+            # that way.
+            if current_molecule is not None and current_molecule.name not in data:
+                data[current_molecule.name] = current_molecule.charge
         return data
 
     TOP_data = TOP_read(filepath_TOP)
@@ -74,10 +82,38 @@ def TOP_get_system_charge(filepath_TOP, TOP_itp_directory_list=[]):
             molecule_charge_data = {**ITP_get_molecule_charges(os.path.join(TOP_itp_directory, itp_filename)), **molecule_charge_data}
 
     total_charge_system = 0
+    unknown = []
     for line in TOP_data[TOP_MOLECULES_SECTION]:
         line = line.strip().split()
+        if not line:
+            continue
         if line[0] in molecule_charge_data:
             total_charge_system +=  molecule_charge_data[line[0]] * round(float(line[1]))
+        else:
+            # Silently contributing zero is how a charged system comes out looking neutral.
+            unknown.append("%s x %s" % (line[0], line[1]))
+
+    if unknown:
+        # A system that computes as neutral while some of its molecules were never costed is the
+        # dangerous case: no counterions are added, and grompp's "System has non-zero total
+        # charge" note is swallowed by the max_warnings allowance in production.py. The run then
+        # produces a perfectly plausible surface tension for a charged periodic box.
+        message = ("could not determine the charge of: %s (no matching moleculetype in the "
+                   "#include'd itp files of %s)" % ("; ".join(unknown), filepath_TOP))
+        if total_charge_system == 0:
+            import core.errors as Errors
+            raise Errors.OperatorError(
+                "the system charge cannot be verified",
+                where=message,
+                why=("the total came out as zero, but molecules whose charge is unknown "
+                     "contribute zero to that total, so a charged system is indistinguishable "
+                     "from a neutral one here and would run without counterions"),
+                fix=("check that every moleculetype in [ molecules ] is defined in one of the "
+                     "#include'd itp files, and that the membrane .top was copied together with "
+                     "the itps it includes"))
+        sys.stderr.write("warning: %s; the total charge %+d is computed without them\n"
+                         % (message, total_charge_system))
+
     return total_charge_system
 
 def GRO_TOP_neutralize_system(filepath_input_GRO, filepath_input_TOP, filepath_output_GRO, filepath_output_TOP, name_Solvent, name_positive_ion, name_negative_ion, TOP_itp_directory_list=[]):
@@ -88,6 +124,25 @@ def GRO_TOP_neutralize_system(filepath_input_GRO, filepath_input_TOP, filepath_o
     if system_charge == 0:
         pass # No need to change the files
     else:
+        # The solvent line is what pays for the counterions, in both the topology and the
+        # structure. If no molecule in [ molecules ] is called name_Solvent, the loop below adds
+        # nothing and name_Ion is never assigned, and the failure arrives at the GRO loop as
+        # "UnboundLocalError: local variable 'name_Ion' referenced before assignment", forty
+        # frames below anything the operator wrote. The usual cause is a membrane built with a
+        # solvent name other than UserSettings.name_solvent_GENION: W versus WF versus SOL.
+        names = [line.strip().split()[0] for line in data_TOP[TOP_MOLECULES_SECTION]
+                 if line.strip()]
+        if name_Solvent not in names:
+            import core.errors as Errors
+            raise Errors.OperatorError(
+                "system has a net charge of %+d but there is no %r molecule to take the "
+                "counterions from" % (system_charge, name_Solvent),
+                where="%s\n[ molecules ] contains: %s" % (filepath_input_TOP, ", ".join(names)),
+                why=("the counterions replace solvent beads, so the solvent has to be findable "
+                     "by name; UserSettings.name_solvent_GENION is currently %r" % name_Solvent),
+                fix=("set name_solvent_GENION in user/usersettings.py to the name this topology "
+                     "uses, or rebuild the membrane with that solvent name"))
+
         #TOP#
         output_data_TOP = []
         molecules = data_TOP[TOP_MOLECULES_SECTION]
@@ -374,7 +429,22 @@ def NDX_from_GRO(filepath_GRO, filepath_NDX_out, resnm_to_group_dict):
 
     for i in range(len(data)):
         resnm = data[i][5:10].strip()
-        groups = resnm_to_group_dict[resnm]
+        try:
+            groups = resnm_to_group_dict[resnm]
+        except KeyError:
+            # This fork exists to run compositions the original never did, so an unlisted
+            # residue is an expected operator error rather than a bug. A bare KeyError here
+            # names neither the file, nor the line, nor the setting that needs editing.
+            import core.errors as Errors
+            raise Errors.OperatorError(
+                "residue name %r is not assigned to an index group" % resnm,
+                where="%s, atom line %d:\n%s" % (filepath_GRO, i + 1, data[i].rstrip()),
+                why=("every residue in the structure has to be classified so that the index "
+                     "groups the .mdp refers to can be built.\n"
+                     "Currently known: %s" % ", ".join(sorted(resnm_to_group_dict))),
+                fix=("add %r to UserSettings.resnm_to_indexgroup_dict with its group "
+                     "(Lipid, Solvent or Protein). Note that Martini 2 and Martini 3 differ "
+                     "on ion names: NA+/CL- against NA/CL." % resnm))
 
         if not isinstance(groups, tuple):
             groups = (groups,)

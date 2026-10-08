@@ -20,7 +20,7 @@ fail quietly:
   the wrong baseline.
 
   Free-membrane surface tension is zero within error. This is the direct test of the above. The
-  Evo-MD POPC reference sits at 1.93 +/- 0.99 bar. A value far from zero means the box area and
+  Evo-MD POPC reference sits at 1.93 +/- 0.99 bar nm. A value far from zero means the box area and
   the equilibrium area disagree, and the fix is to re-plan the lipid count, not to proceed.
 
   The leaflets are symmetric and the membrane has not drifted across the periodic boundary. An
@@ -55,9 +55,17 @@ try:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import user.usersettings as _UserSettings
     DEFAULT_EQUIL_FRACTION = 1.0 - _UserSettings.ENERGY_init_fraction
-except Exception:
-    # Runnable against copied-off files without the package importable.
+except ImportError as _exc:
+    # Runnable against copied-off files without the package importable. Narrowed from a bare
+    # except, which also caught a syntax error or a failed assertion inside usersettings.py and
+    # then silently averaged this reference over a different window than the candidates use,
+    # putting the residual drift straight into delta_gamma with nothing saying so.
     DEFAULT_EQUIL_FRACTION = 0.05
+    sys.stderr.write(
+        "note: user.usersettings is not importable (%s), so the equilibration fraction falls "
+        "back to %.3f. If the pipeline uses a different ENERGY_init_fraction, this reference "
+        "and the candidates will be averaged over different windows; pass --equil-fraction to "
+        "match them.\n" % (_exc, DEFAULT_EQUIL_FRACTION))
 
 
 def pick_series(series, keys):
@@ -160,12 +168,12 @@ def verdict(result):
     g = result["surften"]
     if abs(g["mean"]) > 10 and abs(g["mean"]) > 3 * max(g["err"], 1e-9):
         notes.append(
-            "Surface tension is %.1f +/- %.1f bar, not zero. The constant-area box does not "
+            "Surface tension is %.1f +/- %.1f bar nm, not zero. The constant-area box does not "
             "match this composition's equilibrium area, so peptides would be evaluated against "
             "a pre-stressed bilayer. Re-plan the lipid count and rebuild."
             % (g["mean"], g["err"]))
     else:
-        notes.append("Surface tension is %.1f +/- %.1f bar, zero within error. Ready to use as a "
+        notes.append("Surface tension is %.1f +/- %.1f bar nm, zero within error. Ready to use as a "
                      "reference." % (g["mean"], g["err"]))
 
     if "area_drift_pct_over_window" in result:

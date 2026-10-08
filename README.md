@@ -498,7 +498,17 @@ python -c "import user.membranes as m; m.require_all_calibrated(); print('membra
 
 ### Step 2: measure the calibration set
 
-Put one sequence per line in `seq.txt` and set `STATE = 1` in `run.py`.
+Copy the template and fill it in, then set `STATE = 1` in `run.py`:
+
+```bash
+cp seq.txt.example seq.txt
+```
+
+One sequence per line, one-letter codes, blank lines and `#` comments ignored. The file is read
+relative to the repository, not to the directory you launch from, so a campaign run out of a
+scratch directory still finds it. The template explains what the set has to contain to be worth
+running: four classes, several peptides each, including peptides that bind without lysing, which
+is the class usually left out and the one both objectives can most easily mistake for a hit.
 
 `WRITE_XTC` does not need changing for this. It does not control whether the trajectory is
 written, only whether it is kept: `production.py` always writes the `.xtc` into the simulation's
@@ -511,7 +521,7 @@ fills a disk.
 With MPI, using the layout `amp-env.sh` computed:
 
 ```bash
-mpirun -np $AMP_NP python run.py --output_dir calibration_run
+mpirun -np $AMP_NP python -m mpi4py run.py --output_dir calibration_run
 ```
 
 Without MPI, the same command minus `mpirun`. It runs the sequences one after another in a
@@ -598,7 +608,7 @@ tmux new -s campaign
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
 
-mpirun -np $AMP_NP python run.py --output_dir campaign_damage   # drop mpirun if no MPI
+mpirun -np $AMP_NP python -m mpi4py run.py --output_dir campaign_damage   # drop mpirun if no MPI
 # detach with Ctrl-b then d
 ```
 
@@ -606,13 +616,13 @@ Reattach later from any session with `tmux attach -t campaign`. If `tmux` is not
 you cannot install it, `screen` is usually present, and failing both:
 
 ```bash
-nohup mpirun -np $AMP_NP python run.py --output_dir campaign_damage > campaign.log 2>&1 &
+nohup mpirun -np $AMP_NP python -m mpi4py run.py --output_dir campaign_damage > campaign.log 2>&1 &
 ```
 
 Resuming after a crash, a reboot, or a scheduler kill:
 
 ```bash
-mpirun -np $AMP_NP python run.py --output_dir campaign_damage \
+mpirun -np $AMP_NP python -m mpi4py run.py --output_dir campaign_damage \
     --restart campaign_damage/checkpoint.dat
 ```
 
@@ -662,8 +672,8 @@ measure it rather than taking an estimate: run a single sequence through `STATE 
 it.
 
 ```bash
-printf 'GIGKFLHSAKKFGKAFVGEIMNS\n' > seq.txt
-time mpirun -np 1 python run.py --output_dir timing_test
+printf 'GIGKFLHSAKKFGKAFVGEIMNS\n' > seq.txt   # in the repository root, where run.py reads it
+time mpirun -np 1 python -m mpi4py run.py --output_dir timing_test
 ```
 
 Multiply that by the population size and the iteration count. A default campaign is 144
@@ -790,6 +800,75 @@ A single failed candidate does not stop a campaign: it is scored at the worst po
 and the run continues. Ten consecutive failures do abort, because an unbroken run of them is the
 setup rather than the sequences.
 
+### What stops the run before it starts
+
+Anything that would fail every candidate is checked once, before the first simulation, rather
+than discovered inside the first one. `run.py` refuses to start without:
+
+| Checked | Why it is fatal rather than a warning |
+|---|---|
+| `gmx` runs and reports a version | every candidate calls it; the version is also recorded in the campaign header |
+| `martinize2` runs | the peptide cannot be coarse-grained without it |
+| `PeptideBuilder` imports | the atomistic helix is built from it |
+| every membrane has its four reference numbers | `delta_gamma` is a difference against them |
+| every membrane's `.gro` and `.top` are on disk | these are copied in by hand after `tools/protocol.sh`, which is a separate step from pasting the numbers and easy to skip |
+| the pinned GROMACS, if `GMX_VERSION_EXPECT` is set | surface tension is build-sensitive, so a campaign spanning two builds is not internally comparable |
+| `WRITE_XTC` is `False` for a campaign | a kept trajectory per candidate fills a disk |
+| every sequence uses the twenty standard residue codes | see below |
+
+That last one is the only check here that guards against a wrong answer rather than a crash.
+PeptideBuilder returns the **glycine** geometry for any character it does not recognise, lowercase
+letters included, and raises nothing. A calibration set pasted from a FASTA download in lowercase
+would therefore run to completion as a set of polyglycine helices, show no separation between the
+known classes, and read as the observable having failed, which is the verdict that decides whether
+the whole approach continues. Sequences are upper-cased and checked where they are read.
+
+The same reasoning covers `tools/protocol.sh`, which checks for `gmx`, `insane`, `python3`, numpy
+and matplotlib before step 1 rather than failing at the step that happens to need them, and
+asserts that the `insane` command it extracts from the plan still carries its `-u`, `-l` and
+`-sol` arguments. A truncated `insane` command does not fail; it builds a one-leaflet, salt-free
+box that looks plausible.
+
+### Reading an error
+
+Failures an operator can act on are reported in one format, which says where the problem is and
+what to do about it, rather than as a traceback:
+
+```
+==============================================================================
+AMP-evo-MD: cannot continue
+
+  what:  seq.txt not found
+  where: /home/you/scratch/seq.txt
+         (resolved from 'seq.txt' relative to the current directory /home/you/scratch)
+  why:   STATE = 1 measures a fixed list of peptides whose behaviour is already known,
+         one sequence per line. It is not shipped because the set is yours to choose.
+  fix:   cp seq.txt.example seq.txt
+         then edit it, or point SEQUENCE_FILE in run.py elsewhere
+==============================================================================
+```
+
+`where` is the part worth reading first: for a file it gives the absolute path and, when the path
+was relative, the directory it was resolved against, since running from the wrong directory is the
+most common cause. For a residue name or a malformed line it gives the file and the line.
+
+A GROMACS command that exits non-zero now reports the command, the log it wrote to, and the last
+lines of that log, which is usually enough to diagnose without opening anything:
+
+```
+==============================================================================
+A command exited with status 1.
+  command: gmx grompp -f npt.mdp -c system.gro -p system.top -n index.ndx -o npt.tpr
+  stdout:  /path/to/campaign/KWLRKAFKKLASKALQSLWSALAQ/stdout_stderr.log
+  last lines of that output:
+    Fatal error:
+    Group Lipids not found in index file
+==============================================================================
+```
+
+A traceback still means a bug in this repository rather than something to fix in the setup, and
+is left alone deliberately: dressing one up as an operator error would hide it.
+
 ## Troubleshooting
 
 **Start here for anything that happens during a run.** `steps.jsonl` in the candidate's directory
@@ -849,6 +928,27 @@ whether this is one outlier or the typical case.
 **A campaign produced mostly worst-possible scores.** Those are failed evaluations, not bad
 peptides. `grep -h '"status": "failed"' <dir>/*/steps.jsonl` lists them with the step and the
 error; if they are all the same step with the same error, the fault is in the setup.
+
+**The run prints nothing and uses no CPU, under MPI.** A rank died and the others are blocked
+waiting for it. Launch with `python -m mpi4py run.py`, not plain `python run.py`: the wrapper
+calls `MPI_Abort` on an unhandled exception, so the job ends with a traceback instead of hanging.
+Every `mpirun` line in this file uses it.
+
+**The run prints `initializing the genetic algorithm` and then pegs one core forever.** It cannot
+build an initial population: the constraints reject every draw. This now fails after a bounded
+number of attempts with the charge window, the enabled residues and the length settings in the
+message. The usual cause is a `charge_range` that the residues with a non-zero `propensities`
+entry cannot reach.
+
+**`the system charge cannot be verified`.** Some molecule in the topology's `[ molecules ]` has
+no matching `moleculetype` in the `#include`d itp files, so its charge counted as zero and the
+total came out neutral without being neutral. Check that the membrane `.top` was copied together
+with the itps it includes. Left unchecked this runs a charged periodic box, because grompp's
+non-zero-charge note is inside the warning allowance.
+
+**`residue name 'NA+' is not assigned to an index group`.** Martini 2 and Martini 3 name ions
+differently (`NA+`/`CL-` against `NA`/`CL`). Add the name to `resnm_to_indexgroup_dict` in
+`user/usersettings.py` with its group; the message lists the names currently known.
 
 **The campaign stops improving early.** Look at the diversity panels before changing the
 objective. If positional entropy is near zero across all positions, the population has collapsed
@@ -998,6 +1098,7 @@ needed for those.
 core/                        genetic algorithm and GROMACS wrappers, from upstream
   provenance.py              records which GROMACS produced a run; added by this fork
   steplog.py                 per-step timing and outcome logging; added by this fork
+  errors.py                  one format for failures an operator can act on; added by this fork
 user/
   membranes.py               membrane registry and reference measurements
   usersettings.py            run configuration, objective selection
@@ -1020,6 +1121,7 @@ tools/
   cores.py                   size MPI ranks and threads for this machine
 docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
+seq.txt.example              template for the calibration set; copy to seq.txt
 calibrate.py                 score existing results, check against known classes
 tests/                       regression tests, no GROMACS required
 calibration/reference_popc/  the original POPC membranes and reference energies, as provenance

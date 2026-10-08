@@ -23,11 +23,49 @@ import core.simulation          as Sim
 import core.system              as System
 import core.genetic_algorithm   as GA
 import core.provenance          as Provenance
+import core.errors              as Errors
 
 import user.usersettings        as UserSettings
 import user.membranes           as Membranes
 
 from core.system                import mprint
+
+
+# The twenty residues PeptideBuilder has geometries for. The check below exists because
+# PeptideBuilder does not do it: Geometry.geometry() returns the glycine geometry for anything
+# it does not recognise, including every lowercase letter, and raises nothing. A calibration set
+# pasted from a FASTA download in lowercase would therefore run to completion as a set of
+# polyglycine helices, produce no separation between the known classes, and be read as the
+# observable having failed. That verdict decides whether the project continues, so this is
+# checked before anything is built.
+VALID_RESIDUES = set("ACDEFGHIKLMNPQRSTVWY")
+
+
+def _validate_sequence(sequence, source=None, line_number=None):
+    """Return the sequence upper-cased, or stop naming the offending position."""
+    upper = sequence.strip().upper()
+
+    where = source
+    if source is not None and line_number is not None:
+        where = "%s, line %d" % (source, line_number)
+
+    if not upper:
+        Errors.fail("empty sequence", where=where,
+                    why="every sequence must have at least one residue",
+                    fix="remove the blank entry")
+
+    bad = sorted({c for c in upper if c not in VALID_RESIDUES})
+    if bad:
+        positions = ", ".join("%r at position %d" % (c, i + 1)
+                              for i, c in enumerate(upper) if c in bad)
+        Errors.fail("sequence %s contains characters that are not standard residues: %s"
+                    % (upper, ", ".join(repr(c) for c in bad)),
+                    where=where if where else "sequence %s" % upper,
+                    why=("PeptideBuilder has no geometry for these and silently substitutes "
+                         "glycine rather than failing, so the peptide would be built wrong and "
+                         "the run would look successful.\nOffending positions: %s" % positions),
+                    fix="use the one-letter codes %s" % "".join(sorted(VALID_RESIDUES)))
+    return upper
 
 
 # A failed evaluation is scored rather than fatal, so one bad candidate does not end a campaign
@@ -43,7 +81,98 @@ MAX_CONSECUTIVE_FAILURES = 10
 _CONSECUTIVE_FAILURES = 0
 
 
+# Read relative to this file rather than to the current directory. The campaign is usually
+# launched from a scratch or output directory, and resolving the calibration set against the
+# repository is both what the operator means and what makes the failure reproducible.
+SEQUENCE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seq.txt")
+
+
+def _read_sequence_file(path):
+    """
+    Read the calibration set: one sequence per line, blank lines and # comments ignored.
+
+    Every error here names the file and the line, because this is operator-supplied input and
+    the whole go/no-go verdict rests on it being what the operator thinks it is.
+    """
+    Errors.require_file(
+        path,
+        why=("STATE = 1 measures a fixed list of peptides whose behaviour is already known, "
+             "one sequence per line. It is not shipped because the set is yours to choose."),
+        fix=("cp %s %s\nthen edit it, or point SEQUENCE_FILE in run.py elsewhere"
+             % (os.path.basename(path) + ".example", os.path.basename(path))))
+
+    sequences = []
+    seen = {}
+    with open(path) as handle:
+        for number, line in enumerate(handle, start=1):
+            text = line.split("#", 1)[0].strip()
+            if not text:
+                continue
+            sequence = _validate_sequence(text, source=path, line_number=number)
+            if sequence in seen:
+                # Not fatal: the same peptide twice is a duplicated measurement, which is
+                # wasteful rather than wrong, but it silently halves an apparent sample size.
+                mprint("Note: %s on line %d of %s repeats line %d; it will be simulated twice."
+                       % (sequence, number, path, seen[sequence]))
+            else:
+                seen[sequence] = number
+            sequences.append(sequence)
+
+    if not sequences:
+        Errors.fail("%s contains no sequences" % os.path.basename(path),
+                    where=os.path.abspath(path),
+                    why="every line was blank or a comment",
+                    fix="add one sequence per line, using one-letter residue codes")
+    return sequences
+
+
+def preflight(membranes=True):
+    """
+    Refuse to start on anything that would fail every candidate.
+
+    All of these used to surface mid-run: a missing binary as a non-zero exit code inside the
+    first candidate, a missing membrane file as a FileNotFoundError naming a path in a temporary
+    directory that no longer exists by the time it is read. Each cost the operator a diagnosis
+    out of proportion to the fault, and under MPI a worker dying this way leaves the master
+    blocked in recv with nothing printed at all. Checking here costs about a second.
+
+    Returns the provenance record, so the caller does not capture it twice.
+    """
+    missing = []
+
+    provenance = Provenance.capture()
+    if provenance.get("gmx_version") in (None, "", "UNKNOWN"):
+        missing.append("GROMACS: could not run %r" % provenance.get("gmx_binary", "gmx"))
+    if provenance.get("martinize2_version") in (None, "", "UNKNOWN"):
+        missing.append("martinize2: not on PATH or not runnable")
+
+    try:
+        import PeptideBuilder  # noqa: F401
+    except ImportError as exc:
+        missing.append("PeptideBuilder: %s" % exc)
+
+    if missing:
+        Errors.fail("required programs are missing or not runnable",
+                    where="\n".join(missing),
+                    why=("every candidate calls these, so the campaign would fail on the first "
+                         "one and keep failing"),
+                    fix=("source ~/amp-env.sh  (loads the GROMACS module and the virtualenv)\n"
+                         "then re-run tools/, or see 'Verify the installation' in the README"))
+
+    # Separate from the block above: a missing membrane is the operator's own build step not
+    # having been copied into place, and the fix is a different one.
+    if membranes:
+        Membranes.require_all_calibrated()
+        Membranes.require_all_built()
+
+    Provenance.check_expected(provenance)
+    return provenance
+
+
 def _setup_simulation_directory(sequence, path_parent_dir, dirname=None):
+    # Both entry points pass through here, so this is the one place where an unbuildable
+    # sequence can be caught regardless of whether it came from seq.txt or from the GA.
+    sequence = _validate_sequence(sequence)
     if dirname is None:
         dirname = sequence.upper()
     sequence_dir = os.path.join(path_parent_dir, dirname)
@@ -235,15 +364,11 @@ class Constraint:
 
 
 def main():
-    # Refuse to start if any membrane still carries placeholder reference values. Catching this
-    # here costs a second; catching it after a campaign costs the campaign.
-    Membranes.require_all_calibrated()
-
-    # Record which GROMACS actually produced this campaign, and stop now if it is not the pinned
-    # one. A campaign spanning several sessions can otherwise be produced by more than one build
-    # without leaving any trace in the output.
-    provenance = Provenance.capture()
-    Provenance.check_expected(provenance)
+    # Refuse to start on anything that would fail every candidate: a missing binary, a membrane
+    # still carrying placeholder reference values, a membrane whose files were never copied into
+    # place, or a GROMACS that is not the pinned one. Catching these here costs a second;
+    # catching them after a campaign costs the campaign.
+    provenance = preflight(membranes=True)
 
     g = GA.GeneticAlgorithm()
     g.description = "AMP design run, objective=%s" % UserSettings.OBJECTIVE
@@ -295,11 +420,11 @@ if __name__ == "__main__":
 
     elif STATE == 1:
         mprint("Running fixed sequence list (no GA).")
-        Provenance.check_expected()
         if not UserSettings.WRITE_XTC:
             mprint("Note: WRITE_XTC is False, so trajectories will not be kept after each run. "
                    "The observables are still computed from them; set it True only if you want "
                    "to inspect the calibration trajectories afterwards.")
-        with open("seq.txt") as handle:
-            sequences = [line.strip() for line in handle if line.strip()]
+        sequences = _read_sequence_file(SEQUENCE_FILE)
+        mprint("Read %d sequences from %s." % (len(sequences), os.path.abspath(SEQUENCE_FILE)))
+        preflight(membranes=True)
         _run_specific_sequences(sequences)

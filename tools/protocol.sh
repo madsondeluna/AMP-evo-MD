@@ -53,6 +53,42 @@ MDP_DIR="${HERE}/user/base/production"
 say() { printf '\n=== %s ===\n' "$1"; }
 
 # ---------------------------------------------------------------------------
+# Everything this script needs, checked before the first step rather than discovered at the one
+# that happens to use it. The build is step 2 and the analysis is step 7, so a missing insane or
+# a missing matplotlib used to surface after minutes or after the whole equilibration.
+missing=""
+command -v "${GMX}" >/dev/null 2>&1 || missing="${missing}\n  ${GMX} (GROMACS): not on PATH. Load the module, or set GMX=<path>."
+command -v insane  >/dev/null 2>&1 || missing="${missing}\n  insane: not on PATH. It builds the membrane; see 'insane, for building membranes' in the README."
+command -v python3 >/dev/null 2>&1 || missing="${missing}\n  python3: not on PATH."
+
+if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'CHECKPY' || missing="${missing}\n  python packages: see the message above."
+import sys
+absent = []
+for module in ("numpy", "matplotlib"):
+    try:
+        __import__(module)
+    except ImportError:
+        absent.append(module)
+if absent:
+    sys.stderr.write("  missing python package(s): %s. Activate the virtualenv "
+                     "(source ~/amp-env.sh) or pip install them.\n" % ", ".join(absent))
+    sys.exit(1)
+CHECKPY
+fi
+
+if [ -n "${missing}" ]; then
+    printf 'Cannot run the membrane protocol. Missing:%b\n' "${missing}" >&2
+    exit 1
+fi
+
+if [ ! -d "${MDP_DIR}" ]; then
+    echo "Cannot find the production .mdp directory: ${MDP_DIR}" >&2
+    echo "This script resolves it relative to its own location, so it has to stay inside the" >&2
+    echo "repository; run it as tools/protocol.sh rather than from a copy elsewhere." >&2
+    exit 1
+fi
+
 echo "Using ${NT} thread(s) for GROMACS. Override with NT=<n>."
 say "1/7  plan"
 # ---------------------------------------------------------------------------
@@ -92,7 +128,32 @@ if [ "${PASS:-1}" = "2" ]; then
     say "6/7  production at constant area (the peptide-free reference run)"
 else
 
+# The insane command is extracted from the plan rather than duplicated here, so that the lipid
+# counts cannot drift between the two. -A2 assumes the plan prints it over exactly three lines,
+# which is the kind of assumption that breaks silently: a truncated command still runs, and an
+# insane call that lost its -u leaflet string or its -salt produces a membrane that looks
+# plausible and is wrong. So the result is asserted before it is evaluated.
+if ! grep -q '^insane' plan_pass1.txt; then
+    echo "Could not find the insane command in ${DIR}/plan_pass1.txt." >&2
+    echo "tools/membrane.py plan is expected to print it starting at the beginning of a line." >&2
+    exit 1
+fi
+
 BUILD_CMD=$(grep -A2 '^insane' plan_pass1.txt | tr '\n' ' ' | sed 's/\\ / /g')
+
+for required in " -l " " -u " " -sol " " -x " " -y "; do
+    case "${BUILD_CMD}" in
+        *"${required}"*) ;;
+        *)
+            echo "The insane command extracted from plan_pass1.txt is missing '${required# }':" >&2
+            echo "  ${BUILD_CMD}" >&2
+            echo "It was most likely truncated: the extraction reads the three lines starting" >&2
+            echo "at 'insane', and the plan now prints more. Build by hand from plan_pass1.txt" >&2
+            echo "or fix the extraction in tools/protocol.sh." >&2
+            exit 1
+            ;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 say "2/7  build"
@@ -153,8 +214,24 @@ import mdtools
 import membrane
 
 t, series, _ = mdtools.read_xvg("equil_box.xvg")
-bx = next(v for k, v in series.items() if k.strip().startswith("Box-X"))
-by = next(v for k, v in series.items() if k.strip().startswith("Box-Y"))
+
+
+def pick(prefix):
+    # A bare next() over a generator raises StopIteration here, which inside a heredoc reports
+    # no file, no term and no list of what was actually found. The same lookup in
+    # tools/membrane_analysis.py names the labels it saw, and so does this one now.
+    for key, values in series.items():
+        if key.strip().startswith(prefix):
+            return values
+    raise SystemExit(
+        "equil_box.xvg has no %s column. Found: %s.\n"
+        "That file comes from 'gmx energy' on equil.edr with the box terms selected; if the "
+        "term indices differ in this GROMACS version, the selection in step 5 picked the "
+        "wrong ones." % (prefix, ", ".join(repr(k.strip()) for k in series) or "nothing"))
+
+
+bx = pick("Box-X")
+by = pick("Box-Y")
 area = (bx * by).mean()
 
 _x, _y, _z, atoms = mdtools.read_gro("equil.gro")

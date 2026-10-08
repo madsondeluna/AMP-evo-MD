@@ -182,6 +182,72 @@ def by_role(role):
     return [MEMBRANES[n] for n in membrane_names() if MEMBRANES[n].role == role]
 
 
+def entry_for(observables, membrane):
+    """
+    Look up a membrane's entry in an observables dict, explaining a mismatch.
+
+    The objectives take the membrane names from this registry and the measurements from a file
+    written by an earlier run, and the two can disagree: re-scoring an archived campaign after
+    the registry has changed is the obvious way, and it used to fail as a bare KeyError naming
+    a membrane the operator may never have heard of.
+    """
+    import core.errors as Errors
+
+    try:
+        return observables[membrane.name]
+    except KeyError:
+        present = [k for k in observables if not k.startswith("_")]
+        raise Errors.OperatorError(
+            "these results were not produced with the membranes currently registered",
+            where=("registry (user/membranes.py) expects: %s\n"
+                   "the observables file contains:        %s"
+                   % (", ".join(sorted(membrane_names())), ", ".join(sorted(present)) or "nothing")),
+            why=("the objective reads the %s membrane by name, and this result set does not "
+                 "have one called %r" % (membrane.role, membrane.name)),
+            fix=("re-score with the registry these results were produced under: "
+                 "calibrate.py --membranes <file defining MEMBRANES>, or restore the entries "
+                 "in user/membranes.py"))
+
+
+def load_registry(path):
+    """
+    Replace the registry with the MEMBRANES dict defined in a Python file.
+
+    For re-scoring a result set whose membranes are no longer the ones in the repository. The
+    file is executed, so it is code and is treated as such: it is the operator's own archived
+    copy of a registry, not untrusted input.
+    """
+    import core.errors as Errors
+
+    Errors.require_file(
+        path,
+        why="--membranes loads the membrane registry a result set was produced under",
+        fix=("point it at a file defining MEMBRANES = {...} with MembraneDef entries, such as "
+             "an archived copy of user/membranes.py"))
+
+    namespace = {"MembraneDef": MembraneDef, "__name__": "archived_membranes"}
+    with open(path) as handle:
+        source = handle.read()
+    try:
+        exec(compile(source, path, "exec"), namespace)                 # noqa: S102
+    except Exception as exc:                                           # noqa: BLE001
+        Errors.fail("could not load the membrane registry (%s: %s)" % (type(exc).__name__, exc),
+                    where=os.path.abspath(path),
+                    why="the file is executed as Python and must define MEMBRANES",
+                    fix="check it defines MEMBRANES = {name: MembraneDef(...), ...}")
+
+    registry = namespace.get("MEMBRANES")
+    if not isinstance(registry, dict) or not registry:
+        Errors.fail("the file defines no usable MEMBRANES dict",
+                    where=os.path.abspath(path),
+                    why="a registry is a non-empty dict of name to MembraneDef",
+                    fix="define MEMBRANES = {name: MembraneDef(...), ...}")
+
+    MEMBRANES.clear()
+    MEMBRANES.update(registry)
+    return registry
+
+
 def the_target():
     """The single target membrane. The objectives assume there is exactly one."""
     targets = by_role("target")

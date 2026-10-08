@@ -33,6 +33,7 @@ import os
 import sys
 
 import core.errors as Errors
+import user.membranes as Membranes
 import user.usersettings as UserSettings
 from user.modules.compute_fitness import score_observables
 
@@ -167,7 +168,19 @@ def main():
                         help="defaults to UserSettings.OBJECTIVE")
     parser.add_argument("--labels", default=None,
                         help="CSV with columns sequence,class (inactive|selective|lytic)")
+    parser.add_argument("--membranes", default=None,
+                        help=("Python file defining MEMBRANES, for re-scoring results produced "
+                              "under a registry that user/membranes.py no longer holds"))
     args = parser.parse_args()
+
+    # The objectives read the target and host membranes by name from the registry, while the
+    # measurements come from a file an earlier run wrote. Re-scoring an archived campaign after
+    # the registry has changed is the obvious way for those two to disagree, and without this
+    # there is no way to resolve it short of editing the repository back.
+    if args.membranes:
+        registry = Membranes.load_registry(args.membranes)
+        print("membranes = %s (from %s)"
+              % (", ".join(sorted(registry)), os.path.abspath(args.membranes)))
 
     labels = load_labels(args.labels) if args.labels else {}
 

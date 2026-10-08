@@ -118,7 +118,8 @@ def fitness_from_observables(observables, population_stats=None):
     target = Membranes.the_target()
     host = Membranes.the_host()
 
-    affinity_target = _affinity(observables[target.name], target.name, population_stats)
+    affinity_target = _affinity(Membranes.entry_for(observables, target), target.name,
+                                population_stats)
 
     components = {
         "objective": "binding",
@@ -139,7 +140,8 @@ def fitness_from_observables(observables, population_stats=None):
     # failure, still a failure, and still an argument for bounding the objective with a window
     # once the calibration set has told you where the window is.
     if host is not None:
-        affinity_host = _affinity(observables[host.name], host.name, population_stats)
+        affinity_host = _affinity(Membranes.entry_for(observables, host), host.name,
+                                  population_stats)
         raw -= UserSettings.BINDING_host_weight * affinity_host
         components["affinity_host"] = affinity_host
         components["selectivity"] = affinity_target - affinity_host

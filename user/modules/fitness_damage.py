@@ -56,7 +56,7 @@ def fitness_from_observables(observables):
     target = Membranes.the_target()
     host = Membranes.the_host()
 
-    target_obs = observables[target.name]
+    target_obs = Membranes.entry_for(observables, target)
     dg_target = target_obs["delta_gamma"]["mean"]
     dg_target_err = target_obs["delta_gamma"]["err"]
 
@@ -76,12 +76,13 @@ def fitness_from_observables(observables):
     # curvature paper paid for: maximising a single physical quantity returns its degenerate
     # extreme, not a usable peptide.
     if host is not None:
-        dg_host = observables[host.name]["delta_gamma"]["mean"]
+        host_obs = Membranes.entry_for(observables, host)
+        dg_host = host_obs["delta_gamma"]["mean"]
         excess = max(0.0, dg_host - UserSettings.DAMAGE_host_tolerance)
         penalty = UserSettings.DAMAGE_host_weight * excess
         raw -= penalty
         components["delta_gamma_host"] = dg_host
-        components["delta_gamma_host_err"] = observables[host.name]["delta_gamma"]["err"]
+        components["delta_gamma_host_err"] = host_obs["delta_gamma"]["err"]
         components["host_penalty"] = penalty
         # Reported for interpretation only; the objective is not this difference.
         components["selectivity_gamma"] = dg_target - dg_host

@@ -117,6 +117,9 @@ algorithm's rerun averaging covers only the elites.
 
 The calibration run comes first, and it uses no genetic algorithm.
 
+0. **Run the dry run once.** `python tools/dryrun.py` exercises every step below on a system
+   small enough to finish in about twelve minutes, so that the first thing a long run tests is
+   the science rather than the installation. See [The dry run](#the-dry-run).
 1. **Build and calibrate the membranes.** Each composition needs its own reference
    measurements, taken on the peptide-free membrane: box area, free-membrane surface tension,
    and bilayer thickness. These are not transferable between compositions. The procedure is
@@ -343,7 +346,8 @@ same set of tools.
 ### 4. Verify the installation
 
 The test suite runs without GROMACS, because the scoring layer is a pure function of the
-observables file. It should take under a second:
+observables file. Most of it takes about a second; the dry-run tests add a dozen seconds
+because each runs the driver as its own process:
 
 ```bash
 python -m unittest discover -s tests
@@ -371,6 +375,10 @@ python -c "import run; run.preflight(membranes=False)" && echo "environment ok"
 Silence and `environment ok` mean `gmx`, `martinize2` and `PeptideBuilder` all run. Anything
 missing is named, with the fix. Drop `membranes=False` once the membranes are prepared to check
 their files and reference values as well.
+
+Those three checks cover the installation. To check that the pipeline itself works end to end,
+see [The dry run](#the-dry-run), which runs every step on a small system in about twelve
+minutes. It is worth doing once before the first real campaign.
 
 ### 5. Environment variables
 
@@ -405,6 +413,122 @@ Check what a finished run used:
 head -40 campaign_damage/output.txt                     # the campaign header
 python -c "import json; print(json.load(open('campaign_damage/KWLRK.../observables.json'))['_provenance'])"
 ```
+
+## The dry run
+
+Before committing a workstation to a campaign that runs for days, run the whole pipeline small.
+`tools/dryrun.py` has every step the real thing has, on a system that finishes while you watch:
+
+```bash
+source ~/amp-env.sh
+python tools/dryrun.py
+```
+
+It calls `tools/protocol.sh` for the membranes and `run.py`'s own modules for the candidates
+rather than reimplementing either, because a smoke test that exercises different code than
+production proves nothing about production. What it shrinks:
+
+| | dry run | production |
+|---|---|---|
+| box | 6.0 x 6.0 nm | 8.0 x 8.0 nm |
+| membranes | 2, one target one host | same |
+| membrane runs | 1 ns equilibration, 1 ns production | 200 ns and 400 ns |
+| candidate runs | 1 ns | 400 ns |
+| peptide length | 12 residues | 24 |
+| campaign | 4 candidates, 2 iterations | 144 candidates, 100 iterations |
+| averaging window | last 50 percent | last 5 percent |
+
+Roughly twelve minutes on eight cores. Nothing is written into the repository: the membranes it
+builds go into the working directory, so a dry run cannot overwrite a prepared membrane, and the
+settings are shrunk in memory rather than by editing `user/usersettings.py`.
+
+**The numbers it produces are not usable.** The box is small, the runs are short, and the
+averaging window is widened to compensate, so the surface tension is nowhere near converged.
+A `MembraneDef` emitted by the dry run must never be pasted into `user/membranes.py`. The dry run
+answers "does it run", not "is the answer right".
+
+### What each stage checks
+
+| Stage | Proves | Equivalent to running |
+|---|---|---|
+| 0 environment | `gmx`, `martinize2` and `PeptideBuilder` are reachable and report a version | the preflight every campaign runs |
+| 1 membranes | a membrane can be planned, built with `insane`, minimised, equilibrated, measured, and turned into the four reference numbers | `tools/protocol.sh` |
+| 2 one candidate | one sequence goes through all five modules and comes out with a score | `STATE = 1` with one sequence |
+| 3 mini campaign | the GA evaluates, selects, mutates, writes a progress file and checkpoints | `STATE = 0` |
+| 4 reports | the analysis tools read what the campaign wrote | `tools/ga_report.py` and `calibrate.py` |
+
+Stage 4 matters more than its size suggests: it is normally the part that only gets exercised
+days in, when there is finally something to analyse and a parsing mismatch costs a rerun.
+
+### What you should see
+
+Each stage prints what it is about to prove, the command it stands in for, what to expect, and
+then what it actually got. The shape is fixed; the values below stand in for whatever your run
+measures:
+
+```
+--------------------------------------------------------------------------------
+STAGE 2  one candidate
+--------------------------------------------------------------------------------
+What this proves: a single sequence goes through every module of the per-candidate
+pipeline and comes out with a score
+
+Equivalent command:
+  STATE = 1 in run.py, with one sequence in seq.txt
+
+Expect:
+  five steps in steps.jsonl: build_peptide, insert, production, observables, fitness
+  an observables.json carrying surften, delta_gamma, e_lipids, d_mem and orientation
+  a finite fitness, whose sign says whether the peptide raised or lowered the tension
+
+  sequence                     LARKFLEKLYKQ
+  steps                        build_peptide ok, insert ok, production ok, observables ok, fitness ok
+  dry_target                   delta_gamma <value>, d_mem <value> nm, orientation <value>
+  dry_host                     delta_gamma <value>, d_mem <value> nm, orientation <value>
+  fitness                      <value>  (raw <value>)
+
+PASS
+```
+
+What to read there is structural, not numerical: five steps all `ok`, an entry for each
+membrane, and a finite fitness. The measured values are not comparable to anything at this run
+length, which is why no reference numbers are given for them. The one number worth a glance is
+`orientation`: a value at or near zero means the peptide left the membrane surface, which at
+1 ns can happen by chance and in a real run would be a result.
+
+The run ends with a table of stages and an explicit statement of what passing does and does not
+mean.
+
+Two things in the output look like problems and are not. Stage 1 will almost certainly warn that
+the membrane is not tensionless: at 1 ns it cannot be, and that is precisely why these numbers
+are not a calibration. Stage 3 may report a low acceptance rate when building the initial
+population, because the charge window was tuned for 24-mers and the dry run uses 12-mers.
+
+### When something fails
+
+The summary names the stage, and the stage's own output names the cause. Later stages depend on
+earlier ones, so the first failure is the one to read. The working directory is kept on failure
+and removed on success; pass `--keep` to keep it either way.
+
+```bash
+python tools/dryrun.py --stage 1 --keep     # one stage, keeping everything it wrote
+python tools/dryrun.py --from 2 --dir <dir> # resume in a directory from a previous run
+```
+
+### Without GROMACS
+
+`--no-md` runs no simulation at all. It checks the driver, the settings overrides, the membrane
+registry, the scoring layer, the genetic algorithm and the reporting tools, in a few seconds and
+on any machine:
+
+```bash
+python tools/dryrun.py --no-md
+```
+
+Its value is diagnostic: it separates a broken environment from a broken pipeline. If `--no-md`
+passes and the full dry run fails, the problem is GROMACS, `insane` or `martinize2` and not the
+code. The summary says explicitly which claims it did not check, so it cannot be mistaken for the
+real thing.
 
 ## Running it
 
@@ -1178,6 +1302,7 @@ tools/
   mdtools.py                 shared parsing, statistics and plot style
   amp-env.sh.example         environment template; copy to ~/amp-env.sh and edit
   cores.py                   size MPI ranks and threads for this machine
+  dryrun.py                  the whole pipeline, small, with expected outputs
 docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
 seq.txt.example              template for the calibration set; copy to seq.txt

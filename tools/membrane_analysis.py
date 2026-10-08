@@ -47,6 +47,18 @@ BOX_X_KEYS = ("Box-X", "Box-X ")
 BOX_Y_KEYS = ("Box-Y",)
 SURFTEN_KEYS = ("#Surf*SurfTen", "Surf*SurfTen", "SurfTen")
 
+# The fraction of a trajectory discarded before averaging, taken from the pipeline settings so
+# this tool, tools/membrane.py and the production runs all use one window. delta_gamma is the
+# difference between a reference and a per-candidate value, and averaging the two over different
+# windows would leave any residual drift inside the observable.
+try:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import user.usersettings as _UserSettings
+    DEFAULT_EQUIL_FRACTION = 1.0 - _UserSettings.ENERGY_init_fraction
+except Exception:
+    # Runnable against copied-off files without the package importable.
+    DEFAULT_EQUIL_FRACTION = 0.05
+
 
 def pick_series(series, keys):
     for key in keys:
@@ -56,8 +68,10 @@ def pick_series(series, keys):
     return None
 
 
-def analyse_one(name, directory, equil_fraction=0.5):
+def analyse_one(name, directory, equil_fraction=None):
     """Measure one membrane from the files protocol.sh leaves in its directory."""
+    if equil_fraction is None:
+        equil_fraction = DEFAULT_EQUIL_FRACTION
     result = {"name": name, "dir": directory}
 
     energy_xvg = os.path.join(directory, "%s_energy.xvg" % name)
@@ -304,17 +318,16 @@ def main():
     s = sub.add_parser("single", help="analyse one membrane")
     s.add_argument("--name", required=True)
     s.add_argument("--dir", required=True)
-    s.add_argument("--equil-fraction", type=float, default=0.5,
-                   help="fraction of the trajectory kept for averaging (default 0.5). This is "
-                        "the diagnostic window; the reference constant that reaches the "
-                        "MembraneDef is averaged by tools/membrane.py over the window the "
-                        "production runs use (UserSettings.ENERGY_init_fraction)")
+    s.add_argument("--equil-fraction", type=float, default=DEFAULT_EQUIL_FRACTION,
+                   help="fraction of the trajectory kept for averaging (default %.2f, taken from "
+                        "UserSettings.ENERGY_init_fraction so this agrees with the window the "
+                        "production runs and tools/membrane.py use)" % DEFAULT_EQUIL_FRACTION)
     s.add_argument("--outdir", default=None)
 
     c = sub.add_parser("compare", help="compare several membranes")
     c.add_argument("--dir", required=True, help="parent directory holding one subdir per membrane")
     c.add_argument("--names", nargs="+", required=True)
-    c.add_argument("--equil-fraction", type=float, default=0.5)
+    c.add_argument("--equil-fraction", type=float, default=DEFAULT_EQUIL_FRACTION)
     c.add_argument("--outdir", default=None)
 
     args = parser.parse_args()

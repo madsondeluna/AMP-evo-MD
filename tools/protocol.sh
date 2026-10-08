@@ -215,12 +215,19 @@ fi
 # ---------------------------------------------------------------------------
 say "7/7  extract, analyse, emit the MembraneDef"
 # ---------------------------------------------------------------------------
-# -b discards the first half, matching the equil_fraction membrane_analysis.py uses. Without
-# it the MembraneDef would carry a whole-trajectory average while the verdict printed next to it
-# reports the equilibrated one, and the two would disagree with no indication why.
-PROD_HALF=$(python3 -c "print(int(${PROD_NS}*1000/2))")
+# -b uses the SAME fraction the candidate runs use, read from usersettings rather than hardcoded.
+# This matters: delta_gamma is the difference between this reference and a per-candidate value, so
+# averaging the two over different windows leaves any residual drift inside the observable. The
+# previous value here was half the trajectory while production takes the last five percent.
+PROD_START=$(python3 -c "
+import sys
+sys.path.insert(0, '${HERE}')
+import user.usersettings as U
+print(int(${PROD_NS} * 1000 * U.ENERGY_init_fraction))
+")
+echo "Averaging the reference over the last $(python3 -c "print(${PROD_NS} - int(${PROD_START})//1000)") ns, matching the production window."
 printf 'Box-X\nBox-Y\n#Surf*SurfTen\n\n' \
-    | "${GMX}" energy -f "${NAME}.edr" -o "${NAME}_energy.xvg" -b "${PROD_HALF}" \
+    | "${GMX}" energy -f "${NAME}.edr" -o "${NAME}_energy.xvg" -b "${PROD_START}" \
       > "${NAME}_free.ENERGY" 2>&1
 
 cd "${HERE}"

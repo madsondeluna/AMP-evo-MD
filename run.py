@@ -30,6 +30,19 @@ import user.membranes           as Membranes
 from core.system                import mprint
 
 
+# A failed evaluation is scored rather than fatal, so one bad candidate does not end a campaign
+# that has been running for days. The score has to be worse than any real candidate could reach,
+# so the genetic algorithm never selects a failure as a parent; it is not -inf because the
+# progress file and the report tooling parse these as floats and an infinity propagates into
+# every summary statistic.
+WORST_FITNESS = -1.0e6
+
+# Consecutive failures before giving up. Scattered failures are candidates; an unbroken run of
+# them is the setup.
+MAX_CONSECUTIVE_FAILURES = 10
+_CONSECUTIVE_FAILURES = 0
+
+
 def _setup_simulation_directory(sequence, path_parent_dir, dirname=None):
     if dirname is None:
         dirname = sequence.upper()
@@ -93,8 +106,33 @@ def _compute_fitness_simulation(sequence, dirname=None):
                 print("Simulation stopped due to an error. Retrying simulation. %d retries left."
                       % (CoreSettings.N_simulation_retry - N_retries))
             continue
+
+        except SystemExit:
+            # core.system.check_exitcode calls sys.exit on any non-zero exit from a GROMACS or
+            # martinize2 command, which would otherwise end a multi-day campaign because one
+            # sequence failed. A single unmappable candidate should cost that candidate, not the
+            # run.
+            #
+            # The consecutive counter is what keeps this from hiding a systemic fault: a missing
+            # binary or a broken membrane topology fails every candidate, and that aborts after
+            # the threshold rather than producing a campaign of worst-possible scores. Successful
+            # evaluations reset it, so scattered failures never accumulate into a false abort.
+            global _CONSECUTIVE_FAILURES
+            _CONSECUTIVE_FAILURES += 1
+            mprint("Evaluation of %s failed (a command exited non-zero). Scoring it as the worst "
+                   "possible candidate and continuing. %d consecutive failures."
+                   % (sequence, _CONSECUTIVE_FAILURES))
+            if _CONSECUTIVE_FAILURES >= MAX_CONSECUTIVE_FAILURES:
+                mprint("Aborting: %d evaluations in a row failed, which means the fault is in the "
+                       "setup rather than in the sequences. Check %s in the most recent candidate "
+                       "directory under %s."
+                       % (_CONSECUTIVE_FAILURES, CoreSettings.filename_output_stdout_stderr,
+                          CoreSettings.output_dir))
+                raise
+            return [WORST_FITNESS, 0.0]
         break
 
+    _CONSECUTIVE_FAILURES = 0
     return [fitness, raw]
 
 

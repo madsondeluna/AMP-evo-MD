@@ -789,6 +789,16 @@ Fixes to defects that would otherwise surface silently:
   printed and then ignored, so the next step raised a confusing error about a missing
   intermediate file instead; it now raises a `SimulationError` naming the real cause, which the
   retry logic recognises.
+- A non-zero exit from any GROMACS or martinize2 command called `sys.exit`, so one candidate
+  that could not be built ended a campaign that may have been running for days, and the loss was
+  silent: the output directory simply stopped growing. A failed evaluation is now scored as the
+  worst possible candidate and the run continues, with an abort after ten consecutive failures,
+  since an unbroken run of them is the setup rather than the sequences.
+- The averaging window was not the same on both sides of `delta_gamma`. The per-candidate value
+  used the last five percent of the trajectory while the free-membrane reference used the last
+  fifty, so the observable was a difference between two numbers taken over different windows and
+  any residual drift stayed inside it. All three paths now read
+  `UserSettings.ENERGY_init_fraction`.
 - The error on the upstream fitness was propagated with the area prefactor applied to only one
   of its four variance terms:
 

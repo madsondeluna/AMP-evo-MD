@@ -140,7 +140,12 @@ The calibration run comes first, and it uses no genetic algorithm.
 0. **Run the dry run once.** `python tools/dryrun.py` exercises every step below on a system
    small enough to finish in about twelve minutes, so that the first thing a long run tests is
    the science rather than the installation. See [The dry run](#the-dry-run).
-1. **Build and calibrate the membranes.** Each composition needs its own reference
+1. **Reproduce the source paper's POPC membrane.** The only step whose right answer is known in
+   advance: their free-membrane surface tension is published and their system is shipped here as
+   provenance. Agreement says the build, equilibration, production and extraction chain is sound
+   before any of it is used on a composition nobody has measured.
+   See [Step 1a](#step-1a-reproduce-the-source-papers-membrane-first).
+2. **Build and calibrate the working membranes.** Each composition needs its own reference
    measurements, taken on the peptide-free membrane: box area, free-membrane surface tension,
    and bilayer thickness. These are not transferable between compositions. The procedure is
    documented at the top of `user/membranes.py`. Until both the numbers are filled in and the
@@ -148,15 +153,15 @@ The calibration run comes first, and it uses no genetic algorithm.
    refuses to start. Those are two separate steps and the second is the one usually missed.
    `calibrate.py` does not check either, because re-scoring an existing result set does not
    touch the membranes.
-2. **Measure the calibration set.** Copy `seq.txt.example` to `seq.txt` and fill it with a few
+3. **Measure the calibration set.** Copy `seq.txt.example` to `seq.txt` and fill it with a few
    dozen peptides with known MIC and haemolysis, then run `STATE = 1` in `run.py`. Prioritise
    coverage of the regimes over potency: an inactive peptide and a non-selective lytic one are
    what fix the ends of the scale, and a binding-without-lysis control is what tests whether the
    damage observable is measuring what it claims.
-3. **Check whether the observables separate the classes.** `calibrate.py` scores those results
+4. **Check whether the observables separate the classes.** `calibrate.py` scores those results
    under either objective and reports pairwise concordance against the labels. This is the
    go/no-go: an optimiser cannot recover a signal that is not in the observable.
-4. **Only then run a campaign.** `run.py` with `STATE = 0`.
+5. **Only then run a campaign.** `run.py` with `STATE = 0`.
 
 ## Installation on an Ubuntu workstation
 
@@ -570,6 +575,40 @@ Skipping it is the single most common way to get a confusing failure: `gmx: comm
 a `martinize2` from the wrong Python, or a campaign that runs on the site's default GROMACS
 rather than the pinned one.
 
+### Step 1a: reproduce the source paper's membrane first
+
+Before building anything new, rebuild the membrane the source paper used and check that this
+pipeline measures what they measured. It is the only point in the whole procedure where the right
+answer is known in advance, and it costs one short run.
+
+`calibration/reference_popc/` holds their system as provenance. Read directly from those files,
+it is a pure POPC bilayer with no sterol, no salt and no second component:
+
+| | source paper | what `membrane.py plan` computes |
+|---|---|---|
+| lipids | 64 POPC per leaflet, 128 total | 64 per leaflet, 128 total |
+| box (equilibrium area) | 6.5104 x 6.5104 nm | 6.51 x 6.51 nm |
+| area per lipid | 0.6623 nm2 | 0.662 nm2 |
+| water | 1800 W | 1792 W |
+| free-membrane surface tension | 1.93 +/- 0.99 bar nm | what you are checking |
+
+```bash
+BOX=6.5104 MAX_RESIDUES=24 ./tools/protocol.sh popc_reference "POPC:100" probe
+```
+
+The planner lands on their lipid count and their area per lipid from first principles, which is
+already a check on the planning arithmetic; the 8-bead water difference is 0.4 percent and
+irrelevant. What you are testing is the rest: that the build, the equilibration, the constant-area
+production and the surface-tension extraction together reproduce a published number.
+
+A result of zero within error agrees with them. A result far from zero means something in this
+chain is wrong, and finding that out here costs one run, whereas finding it out from a finished
+campaign costs the campaign. Note the `probe` role: this membrane is for validation and must not
+become a scoring target.
+
+This step uses only POPC, which both `insane` and the shipped Martini 3 files already handle, so
+it runs before any decision about the lipids discussed below.
+
 ### Step 1: prepare and calibrate the membranes
 
 Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMembrane` from
@@ -649,7 +688,7 @@ python tools/membrane_analysis.py compare --dir prep --names bacterial host
 ```
 
 Three things must hold, and all three fail quietly if ignored. The surface tension must be zero
-within error: the Evo-MD POPC reference sits at 1.93 +/- 0.99 bar, and a value far from zero
+within error: the Evo-MD POPC reference sits at 1.93 +/- 0.99 bar nm, and a value far from zero
 means the box area and the equilibrium area disagree, so every peptide would be scored against a
 pre-stressed bilayer. The area must have stopped drifting. The leaflets must be symmetric,
 because an area mismatch between them shows up as spontaneous curvature and contaminates the

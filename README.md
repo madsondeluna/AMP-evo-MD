@@ -46,7 +46,27 @@ quantity with respect to area; damage does not, so one area state suffices.
 configurable because it should be chosen from the calibration run rather than assumed. None of
 the options is the quantity one actually wants, which is the partitioning free energy by
 thermodynamic integration; that does not fit inside the loop and is reserved for re-ranking the
-survivors, exactly as in the source paper.
+survivors, exactly as in the source paper. `BINDING_proxy` is either `interaction_energy` or
+`depth`; `combined` is refused at startup because it z-scores a candidate against its own
+generation and nothing in the pipeline collects the statistics that needs.
+
+Both objectives are gated on the **orientation factor** (Eq. 3 of the source paper), a number in
+[0, 1] measuring whether the peptide was at the interface at all. Two properties of it are worth
+knowing, because both were wrong and both were invisible:
+
+It is averaged over frames, not evaluated at the mean insertion depth. The cosine window is
+symmetric about the reference depth `b`, so a peptide that spends half the window buried between
+the leaflets and half dissolved in water has a mean depth of almost exactly `b`. Evaluated at
+that mean it scores 1.0, the maximum possible weight, for a trajectory that was never at the
+interface.
+
+Below `ORIENTATION_reject_below` the candidate is rejected rather than scaled, at
+`DETACHED_FITNESS`. Scaling cannot express what a low factor means. The factor multiplies only a
+positive score, so a detached peptide scored exactly 0.0 and, on a maximised fitness, 0.0 beats
+every attached peptide whose `delta_gamma` is negative. In early generations most random
+sequences are in that position, so detaching was worth more than most honest attempts and the
+fitness trace would have shown only a plateau at zero. A rejected candidate is not a penalised
+measurement; it is a statement that the measurement does not mean what the objective assumes.
 
 ### What carries over from the source paper, and what does not
 
@@ -556,6 +576,21 @@ Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMe
 `run.py` and from the simulation modules while the reference values are missing, which is
 deliberate: a plausible placeholder would propagate into every fitness value in the campaign
 while looking entirely reasonable.
+
+**Three of the lipids in the compositions below are not parameterised in the force field files
+shipped here.** The Martini 3 set in `user/base/` covers the phospholipids, the ions and the
+solvents; it defines neither cardiolipin (`CDL0`, `CDL1`, `CDL2`), nor sphingomyelin (`DPSM`),
+nor cholesterol (`CHOL`). As written, neither the bacterial nor the host membrane can be built
+without adding the parameter files that define them, which Martini distributes separately from
+the main lipid set. `tools/membrane.py plan` checks this and stops with the list, before
+`insane` builds a structure that `grompp` would then refuse.
+
+Two ways forward, and the choice is a scientific one rather than a packaging one. Add the
+missing parameter files, which keeps the compositions as designed: cardiolipin is what makes a
+Gram-negative inner membrane mimic anionic in the way that matters, and cholesterol is the main
+determinant of a host membrane's resistance to lysis, so dropping either changes what the
+calibration means. Or build from the lipids that are defined and say so, accepting that the host
+membrane becomes a generic neutral bilayer rather than a hemolysis proxy.
 
 ```bash
 # First pass. Prints the plan and the insane command, then stops.
@@ -1228,6 +1263,49 @@ number propagates into the calibration verdict and into the campaign that verdic
   travelled error path in the pipeline reported only an exit status. It now names the command,
   the log, and the last lines of that log. `SimulationError` was raised with no message at all,
   which is what reached the step log as an empty `error` field.
+
+Faults found by a second audit, of the code rather than of its error paths. The first three
+again produced usable-looking numbers:
+
+- A moleculetype was recorded only when a section that was neither `moleculetype` nor `atoms`
+  followed it, so every molecule directly followed by the next `[ moleculetype ]` was dropped.
+  That is the shape of every single-bead species: of the 18 entries in the shipped Martini 3 ion
+  library 6 were parsed, and the 12 lost included `NA` and `CL`, the counterions the function
+  exists to count. A system built with insane's own salt therefore computed as net charged, and
+  the neutralisation step replaced solvent beads with ions it did not need, leaving **every
+  production box charged under PME** with one warning line as the only trace. An earlier fix
+  caught the last molecule in a file only, which is why this is stated in full: the first
+  correction was incomplete and the incompleteness was not visible from the test that covered it.
+- The orientation factor was evaluated at the mean insertion depth instead of averaged over
+  frames, giving the maximum weight to trajectories that were never at the interface.
+- The orientation factor scaled a detached candidate to 0.0, which outranks every attached
+  candidate with a negative raw score. Both are described under [The two objectives](#the-two-objectives).
+- `role="probe"` membranes are documented as ignored by the objectives and entered the
+  orientation minimum anyway, so adding one probe at a low orientation rescaled every fitness in
+  the campaign, which looks exactly like the peptides having got worse.
+- `composition` meant mole fractions in the shipped entries and lipid counts in what the
+  protocol emits, and the one consumer assumed counts. It is counts; the intended ratio lives in
+  `notes`.
+- `area_nm2` is typed in by hand, divides the work term, and was never compared against the box
+  of the structure it names. A mistyped digit or a membrane rebuilt at another area made
+  `delta_gamma` a difference between two unrelated states. `require_all_built` now compares them.
+- Resuming with `--restart` rewrote the progress file from scratch, destroying the entire
+  per-generation history of the campaign being continued. The checkpoint survived, so the run
+  resumed correctly and lost only the human-readable record, which is also what
+  `tools/ga_report.py` reads. The file is appended to now, and the checkpoint carries the
+  iteration so resumed generations get new numbers instead of colliding with the ones they
+  continue.
+- `generate_new_population` had the same unbounded spin the initialisation loop had been
+  hardened against, reachable on generation 50 of a campaign rather than at startup.
+- Three exception types raised inside the module chain, including the one guarding a partial
+  energy sum, were caught by neither handler in `run.py` and so ended a campaign over one
+  candidate. They are `SimulationError` now, and `Errors.fail` raises a distinguishable subclass
+  of `SystemExit` so that a misconfiguration is no longer laundered into a bad fitness score.
+- `mdrun` ran in the directory the campaign was launched from, shared by every MPI rank, so the
+  `step<N>b.pdb` files a constraint failure produces collided across ranks. A timed-out process
+  was killed but never reaped.
+- Converting constraints to bonds wrote its comment without a newline, so the first converted
+  bond was commented out whenever the section did not begin with a comment of its own.
 
 Structural changes:
 

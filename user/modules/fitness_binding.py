@@ -34,12 +34,21 @@ a cheap observable drives the evolution, and the expensive one re-ranks the surv
 
 import numpy as np
 
+import core.system as System
 import user.usersettings as UserSettings
 import user.membranes as Membranes
 
 
-class BindingProxyUnavailable(RuntimeError):
-    """Raised when the configured proxy cannot be computed from the observables at hand."""
+class BindingProxyUnavailable(System.SimulationError):
+    """
+    Raised when the configured proxy cannot be computed from the observables at hand.
+
+    A SimulationError rather than a plain RuntimeError, because run.py recognises
+    SimulationError and SystemExit and nothing else: as a RuntimeError this ended the campaign
+    on the first candidate whose measurement was incomplete, rather than costing that candidate.
+    A cause that affects every candidate still stops the run, through the consecutive failure
+    counter.
+    """
 
 
 def _interaction_energy(entry, membrane_name):
@@ -108,6 +117,30 @@ def membrane_entries(observables):
     """
     return {k: v for k, v in observables.items() if not k.startswith("_")}
 
+
+def scored_entries(observables):
+    """
+    The entries the objectives actually score: the target and, if there is one, the host.
+
+    membrane_entries above returns every measurement in the file. That is right for reporting
+    and wrong for scoring: user/membranes.py documents role="probe" as "anything else carried
+    along for comparison, ignored by the objectives", and the orientation minimum below took it
+    anyway. Adding one probe membrane at orientation 0.10 rescaled every fitness in the
+    campaign by a factor of ten, which looks exactly like the peptides having got worse.
+
+    Falls back to the role recorded in the observables file when the registry does not hold the
+    membrane, so re-scoring an archived campaign uses the roles it was produced under.
+    """
+    import user.membranes as Membranes
+
+    scored = {}
+    for name, entry in membrane_entries(observables).items():
+        definition = Membranes.MEMBRANES.get(name)
+        role = definition.role if definition is not None else entry.get("role")
+        if role in ("target", "host"):
+            scored[name] = entry
+    return scored
+
 def fitness_from_observables(observables, population_stats=None):
     """
     Scalarise the observables dict into (fitness, components).
@@ -147,7 +180,8 @@ def fitness_from_observables(observables, population_stats=None):
         components["selectivity"] = affinity_target - affinity_host
 
     if UserSettings.APPLY_orientation_factor:
-        factor = min(entry["orientation"] for entry in membrane_entries(observables).values())
+        scored = scored_entries(observables)
+        factor = min(entry["orientation"] for entry in scored.values()) if scored else 1.0
     else:
         factor = 1.0
 
@@ -161,7 +195,17 @@ def fitness_from_observables(observables, population_stats=None):
     # rewarded for producing peptides that detach, and nothing in the fitness trace would show
     # it. A candidate whose raw score is already negative is already being rejected on the
     # merits, so the orientation penalty has nothing to add.
-    if raw > 0:
+    if UserSettings.APPLY_orientation_factor and factor <= UserSettings.ORIENTATION_reject_below:
+        # Rejected, not scaled. See ORIENTATION_reject_below in user/usersettings.py: scaling a
+        # non-positive raw score leaves a detached peptide at exactly 0.0, which outranks every
+        # attached peptide that merely performed badly, so the optimiser could climb toward
+        # detachment and the fitness trace would show only a plateau at zero.
+        fitness = UserSettings.DETACHED_FITNESS
+        components["rejected"] = "orientation factor %.4f is at or below %.4f: the peptide was " \
+                                 "not at the interface, so the measurement does not mean what " \
+                                 "this objective assumes" % (factor,
+                                                             UserSettings.ORIENTATION_reject_below)
+    elif raw > 0:
         fitness = factor * raw
     else:
         fitness = raw

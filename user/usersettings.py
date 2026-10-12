@@ -315,6 +315,27 @@ BINDING_host_weight                 = 1.0   # weight of the host term in the sel
 # either objective means to measure.
 APPLY_orientation_factor            = True
 
+# Below this orientation factor the candidate is rejected outright rather than scaled.
+#
+# Scaling alone is not enough, and the reason is worth stating because it is not obvious. The
+# factor multiplies only a positive raw score, so a detached peptide with factor 0 scores
+# exactly 0.0 -- and on a maximised fitness, 0.0 beats every ATTACHED peptide whose raw score
+# is negative. In early generations most random sequences have a negative delta_gamma, so
+# "leave the membrane" was a reachable local optimum worth more than most honest attempts, and
+# the fitness trace would show only a plateau at zero.
+#
+# Rejecting instead of scaling is also the physically honest reading: the factor is not a
+# penalty on a real measurement, it is a statement that the measurement does not mean what the
+# objective assumes. Set to 0.0 to reject only a peptide that is never at the interface, or
+# raise it to demand that a candidate spend most of the window there.
+ORIENTATION_reject_below            = 0.05
+
+# Score given to a rejected candidate. Below any attainable raw value -- real delta_gamma is of
+# order 1 to 10 kJ mol-1 nm-2 -- so such a candidate is never selected as a parent, and well
+# above run.WORST_FITNESS (-1e6) so that the report can tell a peptide that detached from an
+# evaluation that failed to run at all. The two mean different things: the first is a result.
+DETACHED_FITNESS                    = -1.0e3
+
 
 ###############
 ## Functions ##

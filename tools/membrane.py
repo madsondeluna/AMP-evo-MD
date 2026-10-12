@@ -124,8 +124,66 @@ def mean_apl(comp, overrides):
     return total, measured
 
 
+def available_moleculetypes(force_field_dir=None):
+    """Every moleculetype name defined by the force field files shipped for the active ff."""
+    import re
+
+    if force_field_dir is None:
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        force_field_dir = os.path.join(here, "user", "base", "insert_peptide")
+
+    try:
+        import user.usersettings as UserSettings
+        prefix = "martini_v3" if UserSettings.ff == "martini3001" else "martini_v2"
+    except Exception:
+        prefix = "martini_v3"
+
+    pattern = re.compile(r"^\s*\[\s*moleculetype\s*\]\s*\n(?:\s*;[^\n]*\n)*\s*(\S+)", re.M)
+    names = set()
+    if not os.path.isdir(force_field_dir):
+        return names, prefix
+    for filename in sorted(os.listdir(force_field_dir)):
+        if filename.startswith(prefix) and filename.endswith(".itp"):
+            with open(os.path.join(force_field_dir, filename)) as handle:
+                names |= set(pattern.findall(handle.read()))
+    return names, prefix
+
+
+def check_lipids_are_available(composition):
+    """
+    Stop if a requested lipid has no topology in the active force field.
+
+    Without this the first symptom is a grompp error about an unknown moleculetype, after
+    insane has already built a structure, and it names the lipid but not the fact that the
+    force field shipped here simply does not define it. Both compositions in user/membranes.py
+    hit this: the Martini 3 files here define neither cardiolipin (CDL0/1/2), nor sphingomyelin
+    (DPSM), nor cholesterol (CHOL), so neither the bacterial nor the host membrane can be built
+    as written without adding those parameter files.
+    """
+    available, prefix = available_moleculetypes()
+    if not available:
+        return
+
+    missing = [lipid for lipid in composition if lipid not in available]
+    if not missing:
+        return
+
+    sys.exit(
+        "These lipids have no topology in the %s force field files shipped here: %s\n"
+        "\n"
+        "insane can place them, but grompp will refuse the system because no moleculetype\n"
+        "defines them, after the build has already run.\n"
+        "\n"
+        "Either add the parameter file that defines them to user/base/insert_peptide/ and\n"
+        "user/base/production/ (cardiolipin, sphingomyelin and sterols are distributed\n"
+        "separately from the main Martini 3 lipid set), or choose a composition from the\n"
+        "lipids that are defined here.\n"
+        % (prefix, ", ".join(missing)))
+
+
 def cmd_plan(args):
     comp = parse_composition(args.composition)
+    check_lipids_are_available(comp)
     overrides = {}
     for item in args.apl or []:
         if "=" not in item:

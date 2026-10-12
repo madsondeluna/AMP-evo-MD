@@ -202,9 +202,13 @@ class TestPartialEnergySumIsRefused(unittest.TestCase):
     """
 
     def test_a_missing_term_raises_instead_of_summing_to_zero(self):
+        import core.system as System
         from user.modules.compute_observables import _sum_terms
         terms = {"Coul-SR:Protein-Lipids": (-250.0, 5.0)}
-        with self.assertRaises(KeyError) as caught:
+        # SimulationError specifically, not any exception: run.py recognises SimulationError and
+        # SystemExit and nothing else, so the type is what decides whether this costs one
+        # candidate or the whole campaign.
+        with self.assertRaises(System.SimulationError) as caught:
             _sum_terms(terms, ["Coul-SR:Protein-Lipids", "LJ-SR:Protein-Lipids"])
         self.assertIn("LJ-SR:Protein-Lipids", str(caught.exception))
 
@@ -456,3 +460,154 @@ class TestCalibrateInputErrors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestExceptionTypesReachTheRightHandler(unittest.TestCase):
+    """
+    run.py recognises exactly two exception types around an evaluation: System.SimulationError,
+    which it retries and then scores, and SystemExit, which it scores as the worst possible
+    candidate. Anything else propagates out of the scoring function and ends the campaign.
+
+    So the TYPE of an exception decides whether a fault costs one candidate or days of compute,
+    and that makes it part of the interface rather than an implementation detail. Three raise
+    sites were plain KeyError and RuntimeError and ended a campaign over one bad .edr.
+
+    The opposite error matters too: an operator error must NOT be scored as a bad candidate.
+    Errors.fail raises OperatorExit, a subclass of SystemExit, so that run.py can tell a
+    misconfiguration from a GROMACS command that exited non-zero. Without the distinction, a
+    wrong setting produces a full campaign of worst-possible scores that looks like a completed
+    run of terrible peptides.
+    """
+
+    def _classify(self, exc):
+        import core.errors as Errors
+        import core.system as System
+        if isinstance(exc, (Errors.OperatorError, Errors.OperatorExit)):
+            return "fatal"
+        if isinstance(exc, System.SimulationError):
+            return "retried"
+        if isinstance(exc, SystemExit):
+            return "scored"
+        return "ESCAPES"
+
+    def test_a_missing_energy_term_is_a_candidate_failure(self):
+        from user.modules.compute_observables import _sum_terms
+        try:
+            _sum_terms({"Coul-SR:Protein-Lipids": (1.0, 0.1)},
+                       ["Coul-SR:Protein-Lipids", "LJ-SR:Protein-Lipids"])
+        except BaseException as exc:
+            self.assertEqual(self._classify(exc), "retried")
+        else:
+            self.fail("a missing energy term did not raise")
+
+    def test_an_unavailable_binding_proxy_is_a_candidate_failure(self):
+        from user.modules import fitness_binding
+        self.assertEqual(
+            self._classify(fitness_binding.BindingProxyUnavailable("x")), "retried")
+
+    def test_a_membrane_mismatch_is_fatal_rather_than_scored(self):
+        import core.errors as Errors
+        self.assertEqual(self._classify(Errors.OperatorError("x")), "fatal")
+
+    def test_errors_fail_is_distinguishable_from_a_failed_command(self):
+        import core.errors as Errors
+        with silenced():
+            try:
+                Errors.fail("a misconfiguration")
+            except BaseException as exc:
+                raised = exc
+        self.assertEqual(self._classify(raised), "fatal")
+        # Still a SystemExit, so the interpreter and any plain handler behave as before.
+        self.assertIsInstance(raised, SystemExit)
+
+    def test_a_non_zero_command_is_still_scored_not_fatal(self):
+        # The case the scoring path exists for must not be caught by the new fatal branch.
+        self.assertEqual(self._classify(SystemExit(1)), "scored")
+
+
+class TestUnrunnableSettingsAreRejectedAtStartup(unittest.TestCase):
+
+    def test_the_combined_binding_proxy_is_refused_before_any_simulation(self):
+        # It z-scores against the generation, which needs population statistics nothing builds,
+        # so it raises on the first candidate. Catching it in the preflight costs a second
+        # instead of a full evaluation.
+        import run
+        import user.usersettings as UserSettings
+        objective, proxy = UserSettings.OBJECTIVE, UserSettings.BINDING_proxy
+        UserSettings.OBJECTIVE, UserSettings.BINDING_proxy = "binding", "combined"
+        try:
+            with silenced():
+                with self.assertRaises(SystemExit):
+                    run.preflight(membranes=False)
+        finally:
+            UserSettings.OBJECTIVE, UserSettings.BINDING_proxy = objective, proxy
+
+
+class TestMembraneAreaMatchesItsStructure(unittest.TestCase):
+    """
+    area_nm2 is typed in by hand and divides the work term, and the reference surface tension
+    was measured on a box of one particular area. A structure at a different area makes
+    delta_gamma a difference between two unrelated states, with no symptom: both numbers are
+    individually plausible.
+    """
+
+    def setUp(self):
+        import user.membranes as Membranes
+        import user.usersettings as UserSettings
+        self.dir = tempfile.mkdtemp()
+        self.registry = dict(Membranes.MEMBRANES)
+        self.base = UserSettings.path_basedir_insert_peptide
+        UserSettings.path_basedir_insert_peptide = self.dir
+
+    def tearDown(self):
+        import user.membranes as Membranes
+        import user.usersettings as UserSettings
+        Membranes.MEMBRANES.clear()
+        Membranes.MEMBRANES.update(self.registry)
+        UserSettings.path_basedir_insert_peptide = self.base
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _register(self, area_nm2, box_side):
+        import user.membranes as Membranes
+        for suffix, body in ((".gro", "stub\n 0\n%10.5f%10.5f%10.5f\n"
+                                      % (box_side, box_side, 9.0)),
+                             (".top", "; stub\n")):
+            with open(os.path.join(self.dir, "membrane_unit%s" % suffix), "w") as handle:
+                handle.write(body)
+        Membranes.MEMBRANES.clear()
+        Membranes.MEMBRANES["unit"] = Membranes.MembraneDef(
+            name="unit", gro="membrane_unit.gro", top="membrane_unit.top", role="target",
+            area_nm2=area_nm2, surften_free=(0.0, 1.0), thickness_nm=4.0)
+
+    def test_a_matching_area_passes(self):
+        import user.membranes as Membranes
+        self._register(area_nm2=64.0, box_side=8.0)
+        Membranes.require_all_built()
+
+    def test_a_mistyped_area_is_caught(self):
+        import user.membranes as Membranes
+        self._register(area_nm2=46.0, box_side=8.0)  # digits transposed
+        with silenced():
+            with self.assertRaises(SystemExit):
+                Membranes.require_all_built()
+
+    def test_a_membrane_rebuilt_at_another_area_is_caught(self):
+        import user.membranes as Membranes
+        self._register(area_nm2=64.0, box_side=6.0)
+        with silenced():
+            with self.assertRaises(SystemExit):
+                Membranes.require_all_built()
+
+    def test_a_small_rounding_difference_is_tolerated(self):
+        # The recorded value is printed to four decimals, so it never matches the box exactly.
+        import user.membranes as Membranes
+        self._register(area_nm2=63.9994, box_side=8.0)
+        Membranes.require_all_built()
+
+    def test_an_unparseable_structure_does_not_block_the_run(self):
+        # The area comparison is a check, not a requirement.
+        import user.membranes as Membranes
+        self._register(area_nm2=64.0, box_side=8.0)
+        with open(os.path.join(self.dir, "membrane_unit.gro"), "w") as handle:
+            handle.write("; not a gro file\n")
+        Membranes.require_all_built()

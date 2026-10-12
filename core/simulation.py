@@ -142,7 +142,7 @@ class Simulation():
             raise KeyError(
                 "no output variable %r was produced for sequence %s in %s. Published: %s. "
                 "The module that sets it is the last one in the chain; check that it ran and "
-                "that it called set_output_variable."
+                "that it assigned simulation._output_variables[%r]."
                 % (key, self._sequence or "(unknown)", self._output_dir,
-                   ", ".join(sorted(self._output_variables)) or "nothing"))
+                   ", ".join(sorted(self._output_variables)) or "nothing", key))
 

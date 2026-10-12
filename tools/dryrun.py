@@ -483,10 +483,17 @@ def _check_membranes(report, work_dir, definitions):
     import user.membranes as Membranes
 
     for name, definition in definitions.items():
-        area_per_lipid = definition.area_nm2 / max(sum(definition.composition.values()), 1) * 2
-        if not 0.3 < area_per_lipid < 1.2:
-            return ("%s has an implausible area per lipid of %.3f nm2 (expected 0.4 to 0.8). "
-                    "The lipid count and the box do not agree." % (name, area_per_lipid))
+        # composition is lipid COUNTS. Skipped when it is absent rather than guessed at: this
+        # check used to run unconditionally and, against the mole fractions the shipped entries
+        # then carried, computed 2 * area_nm2 and would have rejected every real registry. It
+        # passed only because the --no-md stub happened to use counts.
+        total_lipids = sum((definition.composition or {}).values())
+        if total_lipids >= 10:
+            area_per_lipid = definition.area_nm2 / total_lipids * 2
+            if not 0.3 < area_per_lipid < 1.2:
+                return ("%s has an implausible area per lipid of %.3f nm2 (expected 0.4 to 0.8) "
+                        "from area_nm2 %.3f and %d lipids. The lipid count and the box do not "
+                        "agree." % (name, area_per_lipid, definition.area_nm2, total_lipids))
         if not 2.5 < definition.thickness_nm < 6.5:
             return ("%s has an implausible thickness of %.2f nm (expected 3.5 to 4.5). The "
                     "bilayer may not have formed." % (name, definition.thickness_nm))
@@ -509,11 +516,18 @@ def _stub_membranes(report, work_dir):
 
     definitions = {}
     for name, _composition, role in MEMBRANES:
+        # A real, minimal .gro rather than a one-line placeholder, with a box whose area matches
+        # the area_nm2 below. require_all_built compares the two, so a stub with no box would
+        # have that check skip rather than pass, and --no-md would stop covering it.
+        side = BOX_NM
         for suffix in (".gro", ".top"):
             path = os.path.join(UserSettings.path_basedir_insert_peptide,
                                 "membrane_%s%s" % (name, suffix))
             with open(path, "w") as handle:
-                handle.write("; dry run stub\n")
+                if suffix == ".gro":
+                    handle.write("dry run stub\n 0\n%10.5f%10.5f%10.5f\n" % (side, side, 9.0))
+                else:
+                    handle.write("; dry run stub\n")
         definitions[name] = Membranes.MembraneDef(
             name=name, gro="membrane_%s.gro" % name, top="membrane_%s.top" % name, role=role,
             area_nm2=BOX_NM * BOX_NM, surften_free=(1.5, 1.0), thickness_nm=4.0,

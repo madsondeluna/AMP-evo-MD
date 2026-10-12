@@ -159,6 +159,21 @@ def preflight(membranes=True):
                     fix=("source ~/amp-env.sh  (loads the GROMACS module and the virtualenv)\n"
                          "then re-run tools/, or see 'Verify the installation' in the README"))
 
+    # Settings that cannot produce a run, checked here rather than discovered by the first
+    # candidate after it has already paid for its simulations.
+    if UserSettings.OBJECTIVE == "binding" and UserSettings.BINDING_proxy == "combined":
+        # The combined proxy z-scores each candidate against its own generation, which needs
+        # population statistics. Nothing in the pipeline builds them: score_observables is
+        # called per candidate with population_stats=None, so this proxy raises on the first
+        # evaluation and has never been runnable.
+        Errors.fail("BINDING_proxy = 'combined' is not wired up",
+                    where="user/usersettings.py",
+                    why=("it z-scores each candidate against its own generation, which needs "
+                         "statistics over the whole population. Nothing collects those: the "
+                         "objective is called one candidate at a time, so the proxy raises on "
+                         "the first evaluation."),
+                    fix="use BINDING_proxy = 'interaction_energy' or 'depth'")
+
     # Separate from the block above: a missing membrane is the operator's own build step not
     # having been copied into place, and the fix is a different one.
     if membranes:
@@ -227,6 +242,16 @@ def _compute_fitness_simulation(sequence, dirname=None):
 
             raw = simulation.get_output_variable("ddF")
             fitness = simulation.get_output_variable("fitness")
+
+        except (Errors.OperatorError, Errors.OperatorExit):
+            # A misconfiguration with a known fix, already reported in full. It is not this
+            # candidate's fault and it will not be any other candidate's fault either, so
+            # retrying or scoring it would turn a one-line diagnosis into a campaign of
+            # worst-possible scores that looks like a completed run. Listed before SystemExit
+            # because OperatorExit is a subclass of it.
+            mprint("Stopping: the failure above is a setup problem, not a property of %s."
+                   % sequence)
+            raise
 
         except System.SimulationError:
             N_retries += 1

@@ -32,36 +32,61 @@ def TOP_get_system_charge(filepath_TOP, TOP_itp_directory_list=[]):
                 self.charge = 0
 
         data = {}
+        current_molecule = None
+
+        def commit():
+            # Record whatever molecule is open. Called on EVERY section header and once at end
+            # of file, which is the whole correction: the original committed a molecule only
+            # when a section that was neither moleculetype nor atoms came along, so a molecule
+            # followed directly by the next [ moleculetype ] was dropped and silently
+            # contributed zero charge. That is the shape of every single-bead species, which
+            # means the ions: of the 18 moleculetypes in martini_v3.0.0_ions_v1.itp only 6 were
+            # parsed, and the 12 lost included NA and CL, the counterions this function exists
+            # to count. A system built with insane's own salt then computed as net charged, and
+            # GRO_TOP_neutralize_system replaced solvent beads with ions it did not need,
+            # leaving every production box charged under PME with nothing in the output to say
+            # so.
+            if current_molecule is not None:
+                data[current_molecule.name] = current_molecule.charge
+
         with open(filepath_ITP, 'rt') as file:
             state = None
-            current_molecule = None
-            for line in file:
-                line = line.strip()
-                if len(line) == 0 or line.startswith(";"):
+            for number, line in enumerate(file, start=1):
+                line = line.split(";", 1)[0].strip()
+                if not line:
                     continue
 
                 if line.startswith("["):
                     if ITP_MOLECULE_TYPE_SECTION in line:
+                        # A new molecule begins, so the previous one is complete. Its name
+                        # arrives on the next data line.
+                        commit()
+                        current_molecule = None
                         state = ITP_MOLECULE_TYPE_SECTION
                     elif ITP_ATOMS_SECTION in line:
                         state = ITP_ATOMS_SECTION
                     else:
+                        # [ bonds ], [ angles ] and the rest: stop reading atoms, but the
+                        # molecule is still open and must not be dropped.
                         state = None
-                        if current_molecule is not None:
-                            data[current_molecule.name] = current_molecule.charge
                     continue
 
                 if state == ITP_MOLECULE_TYPE_SECTION:
                     current_molecule = Molecule(line.split()[0])
                 elif state == ITP_ATOMS_SECTION:
-                    current_molecule.charge += round(float(line.split()[6]))
+                    if current_molecule is None:
+                        raise ValueError(
+                            "%s line %d: an [ atoms ] section appears before any "
+                            "[ moleculetype ]" % (filepath_ITP, number))
+                    fields = line.split()
+                    if len(fields) < 7:
+                        raise ValueError(
+                            "%s line %d: an atom line needs at least 7 columns, the 7th being "
+                            "the charge; found %d: %s"
+                            % (filepath_ITP, number, len(fields), line))
+                    current_molecule.charge += round(float(fields[6]))
 
-            # A molecule was only ever committed when a LATER [section] header appeared, so the
-            # last molecule in a file whose [ atoms ] runs to the end of the file was dropped and
-            # silently contributed zero charge to the system. Ion itps in particular tend to end
-            # that way.
-            if current_molecule is not None and current_molecule.name not in data:
-                data[current_molecule.name] = current_molecule.charge
+            commit()
         return data
 
     TOP_data = TOP_read(filepath_TOP)
@@ -363,10 +388,18 @@ def ITP_constraints_to_bonds(filepath_ITP, filepath_ITP_noConstraints, constrain
         for row in data:
             file.write(row + "\n")
             if(row.startswith("[") and "bonds" in row):
-                file.write("; Constraints converted to bonds for energy minimization purposes")
+                # The newline was missing, so when the constraints block does not open with a
+                # comment line the first converted bond was appended to this comment and
+                # silently commented out: one bond short in every minimisation topology, and
+                # nothing says so. Masked today only because the shipped itps happen to start
+                # that section with a comment.
+                file.write("; Constraints converted to bonds for energy minimization purposes\n")
                 for row_constraints in constraints:
                     if not (len(row_constraints) == 0 or row_constraints.startswith(";")):
-                        row_constraints = row_constraints + " " + constraint_forceConstant
+                        # str(): the default for this parameter is an int, so the default was
+                        # unusable (TypeError on the concatenation). Production passes a
+                        # string, which is why it never surfaced.
+                        row_constraints = row_constraints + " " + str(constraint_forceConstant)
                     file.write(row_constraints + "\n")
                 continue
 

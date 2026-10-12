@@ -28,6 +28,19 @@ RULE = "=" * 78
 BANNER = "AMP-evo-MD: cannot continue"
 
 
+class OperatorExit(SystemExit):
+    """
+    What fail() raises: a stop whose cause is already reported and already understood.
+
+    A subclass of SystemExit so that existing handlers and the interpreter's own exit path keep
+    working, but distinguishable from it, which matters because run.py treats a plain SystemExit
+    as "a GROMACS command exited non-zero" and converts it into a worst-possible fitness for
+    that candidate. An operator error laundered into a bad score is worse than a crash: the
+    campaign continues, every candidate fails the same way, and the output looks like a
+    completed run of terrible peptides.
+    """
+
+
 class OperatorError(Exception):
     """
     A failure with a known cause and a known fix.
@@ -71,15 +84,16 @@ def fail(what, where=None, why=None, fix=None, exit_code=1):
     module exists to prevent.
     """
     block = format_block(what, where, why, fix)
-    sys.stderr.write(block + "\n")
-    sys.stderr.flush()
-    try:
-        sys.stdout.write(block + "\n")
-        sys.stdout.flush()
-    except (OSError, ValueError):
-        # A closed or broken stdout must not replace the real message with a BrokenPipeError.
-        pass
-    sys.exit(exit_code)
+    # Both streams are guarded. A closed or broken stream must not replace the real message
+    # with a BrokenPipeError, and that applies to stderr exactly as much as to stdout: under a
+    # pipeline or a scheduler either one can be gone.
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            stream.write(block + "\n")
+            stream.flush()
+        except (OSError, ValueError, AttributeError):
+            continue
+    raise OperatorExit(exit_code)
 
 
 def require_file(path, why, fix, what=None):
@@ -93,10 +107,13 @@ def require_file(path, why, fix, what=None):
     if os.path.isfile(path):
         return path
 
+    # Two independent facts, so two independent notes. They were joined by elif, which meant a
+    # relative path that pointed at a directory never said so, and that is the more confusing
+    # of the two cases.
     where = os.path.abspath(path)
     if not os.path.isabs(path):
         where += "\n(resolved from %r relative to the current directory %s)" % (path, os.getcwd())
-    elif os.path.isdir(path):
+    if os.path.isdir(path):
         where += "\n(this path exists but is a directory, not a file)"
 
     fail(what or ("%s not found" % os.path.basename(path)), where=where, why=why, fix=fix)

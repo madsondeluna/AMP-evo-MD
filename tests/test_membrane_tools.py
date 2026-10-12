@@ -156,3 +156,41 @@ class TestParseComposition(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestLipidsAreCheckedAgainstTheForceField(unittest.TestCase):
+    """
+    A lipid insane can place but the force field does not define fails at grompp, after the
+    build has run, with a message that names the lipid but not the fact that no parameter file
+    here defines it. Both shipped compositions are in that position: the Martini 3 files in this
+    repository define neither cardiolipin, nor sphingomyelin, nor cholesterol.
+    """
+
+    def test_the_force_field_inventory_is_not_empty(self):
+        available, prefix = membrane.available_moleculetypes()
+        self.assertTrue(prefix.startswith("martini_v"))
+        self.assertGreater(len(available), 100,
+                           "no moleculetypes were found; the force field path is probably wrong")
+
+    def test_lipids_that_are_defined_pass(self):
+        membrane.check_lipids_are_available({"POPE": 0.7, "POPG": 0.3})
+
+    def test_an_undefined_lipid_stops_the_plan(self):
+        with self.assertRaises(SystemExit) as caught:
+            membrane.check_lipids_are_available({"POPE": 0.9, "CDL2": 0.1})
+        self.assertIn("CDL2", str(caught.exception))
+
+    def test_the_message_lists_every_missing_lipid(self):
+        with self.assertRaises(SystemExit) as caught:
+            membrane.check_lipids_are_available({"POPC": 0.6, "DPSM": 0.1, "CHOL": 0.3})
+        message = str(caught.exception)
+        self.assertIn("DPSM", message)
+        self.assertIn("CHOL", message)
+        self.assertNotIn("POPC", message.split("\n")[0])
+
+    def test_the_counterions_and_water_are_available(self):
+        # If these were missing the whole build would be impossible, so a failure here means
+        # the inventory is reading the wrong files rather than that the lipids are absent.
+        available, _prefix = membrane.available_moleculetypes()
+        for name in ("W", "NA", "CL"):
+            self.assertIn(name, available)

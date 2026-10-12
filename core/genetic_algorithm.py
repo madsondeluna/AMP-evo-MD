@@ -485,7 +485,11 @@ class _Population:
             if not MPI.COMM_WORLD.Get_rank() == 0:
                 return
 
-        pickle_data = (self.chromosome_pool, self.n_run_dict, self.population)
+        # The iteration is part of the restart state. Without it a resumed run restarted its
+        # numbering at 0, so the progress file gained a second "Iteration 0" block and
+        # tools/ga_report.py, which keys generations by that number, merged the two into one.
+        pickle_data = (self.chromosome_pool, self.n_run_dict, self.population,
+                       self.ptr_genetic_algorithm.current_iteration)
 
         filepath_checkpoint = self.ptr_genetic_algorithm.filepath_checkpoint
         if filepath_checkpoint is not None:
@@ -513,7 +517,14 @@ class _Population:
 
         try:
             with open(filepath_checkpoint, 'rb') as file:
-                (chromosome_pool, n_run_dict, population) = pickle.load(file)
+                loaded = pickle.load(file)
+            # Checkpoints written before the iteration was recorded hold three elements. They
+            # still load; such a run resumes with its numbering restarted, as it did before.
+            if len(loaded) == 4:
+                (chromosome_pool, n_run_dict, population, iteration) = loaded
+            else:
+                (chromosome_pool, n_run_dict, population) = loaded
+                iteration = 0
         except Exception as exc:
             # Anything unpickling raises here means the file is not a usable checkpoint. The
             # distinction worth drawing for the operator is between a truncated file, which is
@@ -529,6 +540,7 @@ class _Population:
         self.chromosome_pool = chromosome_pool
         self.n_run_dict = n_run_dict
         self.population = population
+        self.ptr_genetic_algorithm.restart_from_iteration = iteration
         mprint("Restarted from %s: %d sequences already evaluated, population of %d."
                % (os.path.abspath(filepath_checkpoint), len(chromosome_pool), len(population)))
 
@@ -576,7 +588,37 @@ class _Population:
         P_mutate        = self.ptr_genetic_algorithm.ptr_P_mutate_function(float(UserSettings.max_length), self.ptr_genetic_algorithm.current_iteration/self.ptr_genetic_algorithm.iterations) # second argument does not do anything (is not used in function)
         random          = self.random
 
-        while len(new_population) < len(self.population):
+        # The same unbounded spin the initialisation loop was hardened against, reachable here
+        # on generation 50 of a 100-generation campaign rather than at startup, where nobody is
+        # watching. Two ways in: settings edited between a run and its --restart so that the
+        # constraints now reject every child, and a population converged enough that the
+        # duplicate and reverse-duplicate filtering below can no longer fill the quota.
+        target = len(self.population)
+        max_attempts = 1000 * max(target, 1)
+        attempts = 0
+
+        while len(new_population) < target:
+            attempts += 1
+            if attempts > max_attempts:
+                import core.errors as Errors
+                Errors.fail(
+                    "could not build generation %d: %d of %d sequences after %d attempts"
+                    % (self.ptr_genetic_algorithm.current_iteration, len(new_population),
+                       target, attempts),
+                    where="core/genetic_algorithm.py, generate_new_population",
+                    why=("every crossover and mutation was rejected, either by the constraints "
+                         "or as a duplicate of a sequence already in the generation.\n"
+                         "charge_range = %s, residues with a non-zero propensity: %s\n"
+                         "min_length = %s, max_length = %s, parents = %d"
+                         % (UserSettings.charge_range,
+                            "".join(sorted(a for a, p in UserSettings.propensities.items()
+                                           if p > 0)) or "(none)",
+                            UserSettings.min_length, UserSettings.max_length,
+                            len(selected_population))),
+                    fix=("if the settings were changed since this campaign started, restore "
+                         "them; a constraint the current population cannot satisfy makes every "
+                         "child illegal. Otherwise the population has converged: raise the "
+                         "mutation rate or the parent count."))
             A = random.choice(selected_population).copy()
             B = random.choice(selected_population).copy()
             #print("PARENTS\t"+"".join(A.sequence)+"\t"+"".join(B.sequence))
@@ -843,6 +885,8 @@ class GeneticAlgorithm:
         self.filepath_progress_output   = None
         self.filepath_checkpoint        = None
         self.current_iteration          = 0
+        # Set by read_checkpoint_file; the run loop continues the numbering from it.
+        self.restart_from_iteration     = 0
         self.additional_output          = {}
 
         # Other values
@@ -881,7 +925,28 @@ class GeneticAlgorithm:
             if self.filepath_progress_output is None:
                 return
 
-            with open(self.filepath_progress_output, 'wt') as file:
+            # 'at', not 'wt'. run() always writes this header, including on a restart, and the
+            # documented restart invocation points --output_dir and --restart at the same
+            # directory. Truncating here destroyed the entire per-generation history of the
+            # campaign being continued: the checkpoint survived, so the run resumed correctly
+            # and silently lost the only human-readable record of how it got there, which is
+            # also what tools/ga_report.py reads.
+            resuming = os.path.isfile(self.filepath_progress_output)
+            with open(self.filepath_progress_output, 'at' if resuming else 'wt') as file:
+                if resuming:
+                    # One marker line, not the whole settings banner again. The banner is parsed
+                    # as settings only before the first generation; written a second time it
+                    # lands in the middle of the run, where tools/ga_report.py counts every one
+                    # of its lines as a row that failed to parse and reports that the format and
+                    # the tool have diverged. The line below ends in a colon, which that parser
+                    # already treats as a header rather than a row.
+                    file.write("\n")
+                    file.write("### resumed from checkpoint at iteration %d:\n"
+                               % getattr(self, "restart_from_iteration", 0))
+                    mprint("Appending to the existing progress file %s; the previous run's "
+                           "history is kept above this point."
+                           % os.path.abspath(self.filepath_progress_output))
+                    return
                 for line in data:
                     print(line)
                     file.write(line + "\n")
@@ -996,17 +1061,26 @@ class GeneticAlgorithm:
         if self._bRestartRun: 
             self._population.generate_new_population(self.N_parents)
 
+        # Continue the numbering rather than restarting it. The progress file is appended to on
+        # a restart, and tools/ga_report.py keys generations by this number, so repeating it
+        # would merge the resumed generations into the ones they continue from.
+        offset = getattr(self, "restart_from_iteration", 0) + 1 if self._bRestartRun else 0
+
         for i in range(self.iterations):
-            self.current_iteration = i
+            self.current_iteration = offset + i
             mprint("Status: Iteration %d/%d, %d simulations per iteration." % (
                 self.current_iteration, 
-                self.iterations, 
+                offset + self.iterations, 
                 self.population_size, 
                 )
             )
 
             output_dict = self._population.evaluate_fitness()
-            self.__write_progress_file(i, output_dict, self._population.n_run_dict)
+            # current_iteration, not the loop variable: on a restart they differ by the
+            # offset, and the loop variable would relabel the resumed generations 0, 1, 2
+            # again, which is what collided in the progress file.
+            self.__write_progress_file(self.current_iteration, output_dict,
+                                       self._population.n_run_dict)
             self._population.generate_new_population(self.N_parents)
 
     def get_result(self, N_output=1):

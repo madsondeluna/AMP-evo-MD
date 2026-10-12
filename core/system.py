@@ -40,14 +40,27 @@ class _Process:
 
         process = cls._new_process(subprocess.Popen(command.split(), cwd=cwd, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr))
         try:
-            process.communicate(input=input, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            print("Timeout expired for process id:\t%d. Killing process." % (process.pid))
-            process.kill()
-            returncode = 2
-        else:
-            returncode = process.returncode
-        cls._active_processes.discard(process)
+            try:
+                process.communicate(input=input, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                print("Timeout expired for process id:\t%d. Killing process." % (process.pid))
+                process.kill()
+                # kill() only requests termination. Without a second communicate() the child is
+                # never reaped and process.returncode stays None, so on a long campaign the
+                # zombies accumulate for the life of the run. The second timeout is a bound on
+                # how long to wait for a process that has already been killed.
+                try:
+                    process.communicate(timeout=30)
+                except subprocess.TimeoutExpired:
+                    print("Process %d did not exit after being killed." % process.pid)
+                returncode = 2
+            else:
+                returncode = process.returncode
+        finally:
+            # In a finally, because any other exception out of communicate used to leave the
+            # Popen in this class-level set permanently, which both leaks it and makes the
+            # termination handler act on a process that is already gone.
+            cls._active_processes.discard(process)
 
         return returncode
 
@@ -248,12 +261,34 @@ def _sim_check_exitcode(exitcode, command=None, path_stdout=None, path_stderr=No
         parts.append("last lines of that output:\n" + tail)
     raise SimulationError("\n".join(parts))
 
-def run_simulation_command(command, tTimeout=None, path_stdout=None, path_stderr=None):
+def run_simulation_command(command, tTimeout=None, path_stdout=None, path_stderr=None,
+                           cwd=None):
+    # mdrun writes some files under fixed relative names regardless of the -deffnm and -o
+    # arguments: step<N>b.pdb and step<N>c.pdb when a constraint or LINCS failure occurs, which
+    # is exactly what a membrane-rupturing coarse-grained peptide produces. With no cwd those
+    # landed in the directory the campaign was launched from, shared by every MPI rank, under
+    # names that collide across ranks and outside the per-candidate directory the rest of the
+    # design is built around. Defaulting to the directory of the log file puts them with the
+    # candidate they belong to, which is also where anyone diagnosing the failure will look.
+    if cwd is None:
+        for path in (path_stdout, path_stderr):
+            if path:
+                directory = os.path.dirname(os.path.abspath(path))
+                if os.path.isdir(directory):
+                    cwd = directory
+                    break
+
     hdlOut = _try_open(path_stdout, 'at')
-    hdlErr = _try_open(path_stderr, 'at')
+    try:
+        hdlErr = _try_open(path_stderr, 'at')
+    except BaseException:
+        # The first handle is already open at this point and would otherwise leak for the life
+        # of the process; on a long campaign that is a file descriptor per failed candidate.
+        hdlOut.close()
+        raise
 
     with hdlOut as out, hdlErr as err:
-        returncode = _Process.run(command, stdout=out, stderr=err, timeout=tTimeout)
+        returncode = _Process.run(command, stdout=out, stderr=err, timeout=tTimeout, cwd=cwd)
 
     _sim_check_exitcode(returncode, command=command,
                         path_stdout=path_stdout, path_stderr=path_stderr)

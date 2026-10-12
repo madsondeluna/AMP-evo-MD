@@ -210,7 +210,7 @@ def module_compute_observables(simulation):
             # true uncertainty of a correlated MD time series and is reported as a floor, not
             # as a converged estimate.
             err = float(z.std(ddof=1) / np.sqrt(len(z))) if len(z) > 1 else 0.0
-            return float(z.mean()), err
+            return float(z.mean()), err, z
 
         # --- measurements ------------------------------------------------------------------
         surften, surften_err = read_surften()
@@ -222,8 +222,23 @@ def module_compute_observables(simulation):
         delta_gamma = gamma_free - surften
         delta_gamma_err = float(np.sqrt(gamma_free_err ** 2 + surften_err ** 2))
 
-        d_mem, d_mem_err = read_distance()
-        factor = orientation_factor(d_mem, membrane.b_nm)
+        d_mem, d_mem_err, z_frames = read_distance()
+
+        # Averaged over frames, not evaluated at the mean depth. The cosine window is strongly
+        # non-linear and symmetric about b, so factor(mean d) and mean(factor(d)) differ most
+        # in exactly the cases this factor exists to catch. A peptide spending half the window
+        # buried between the leaflets and half dissolved in water has a mean depth of almost
+        # precisely b, and scored 1.0: the maximum possible weight for a configuration that was
+        # never at the interface at all. A peptide drifting off the surface during the window
+        # scored 1.0 as well. Measured on synthetic trajectories with b = 1.75 nm, the two
+        # differ by 125x and 1.7x respectively.
+        per_frame = np.array([orientation_factor(float(value), membrane.b_nm)
+                              for value in z_frames])
+        factor = float(per_frame.mean())
+        # The fraction of frames at the interface at all, reported alongside because a mean of
+        # 0.5 can mean "half in, half out" or "steadily at the window edge", and those are
+        # different peptides.
+        factor_frames_above_zero = float((per_frame > 0.0).mean())
 
         energies, energy_warning = read_interaction_energies()
 
@@ -239,6 +254,7 @@ def module_compute_observables(simulation):
                                  "units": "kJ mol-1"},
             "d_mem": {"mean": d_mem, "err": d_mem_err, "units": "nm"},
             "orientation": factor,
+            "orientation_frames_at_interface": factor_frames_above_zero,
         }
 
         if energies is not None:
@@ -329,7 +345,12 @@ def _sum_terms(terms, keys):
     # sum, because nothing downstream can tell the difference.
     missing = [key for key in keys if key not in terms]
     if missing:
-        raise KeyError(
+        # SimulationError, not KeyError: run.py recognises SimulationError and SystemExit and
+        # nothing else, so a bare KeyError here ended the campaign over one candidate's .edr.
+        # As a SimulationError it is retried and then scored, and a systemic cause (the group
+        # names in the mdp not matching the settings) still aborts, through the consecutive
+        # failure counter rather than on the first occurrence.
+        raise System.SimulationError(
             "cannot sum the interaction energy: %s absent from the parsed gmx energy output. "
             "Found: %s. These names come from energygrps in the production .mdp and from "
             "UserSettings.ENERGY_group_terms; the two have to agree."

@@ -75,11 +75,15 @@ class TestDamageObjective(unittest.TestCase):
         self.assertAlmostEqual(components["orientation_factor"], 0.25)
         self.assertAlmostEqual(fitness, 0.25 * components["raw"])
 
-    def test_detached_peptide_scores_zero(self):
+    def test_detached_peptide_is_rejected_rather_than_scored_zero(self):
+        # It used to score exactly 0.0, which on a maximised fitness outranks every attached
+        # peptide with a negative raw score. Scaling cannot express "this measurement does not
+        # mean what the objective assumes"; rejection can.
         obs = observables(5.0, 0.0)
         obs["bacterial"]["orientation"] = 0.0
-        fitness, _ = fitness_damage.fitness_from_observables(obs)
-        self.assertAlmostEqual(fitness, 0.0)
+        fitness, components = fitness_damage.fitness_from_observables(obs)
+        self.assertEqual(fitness, UserSettings.DETACHED_FITNESS)
+        self.assertIn("rejected", components)
 
 
 class TestBindingObjective(unittest.TestCase):
@@ -253,7 +257,38 @@ class TestOrientationWithNegativeRaw(unittest.TestCase):
         fa, _ = fitness_damage.fitness_from_observables(attached)
         fd_, _ = fitness_damage.fitness_from_observables(detached)
         self.assertGreater(fa, fd_)
-        self.assertAlmostEqual(fd_, 0.0)
+        self.assertEqual(fd_, UserSettings.DETACHED_FITNESS)
+
+    def test_a_detached_peptide_loses_to_every_attached_one(self):
+        """
+        The property the whole guard exists for, stated directly rather than pairwise.
+
+        The earlier tests compared a detached and an attached peptide at the SAME raw score,
+        which the old scaling already satisfied. The reachable failure was across raw scores: a
+        detached peptide at raw +3 scored 0.0 and beat an attached one at raw -0.5, so in early
+        generations, where most random sequences score negative, detaching was worth more than
+        most honest attempts.
+        """
+        detached = observables(3.0, 0.0)
+        for name in ("bacterial", "host"):
+            detached[name]["orientation"] = 0.0
+        worst_detached, _ = fitness_damage.fitness_from_observables(detached)
+
+        for dg in (-5.0, -2.0, -0.5, -0.01):
+            attached = observables(dg, 0.0)
+            attached_fitness, _ = fitness_damage.fitness_from_observables(attached)
+            self.assertLess(worst_detached, attached_fitness,
+                            "a detached peptide outranked an attached one at delta_gamma=%s" % dg)
+
+    def test_a_candidate_just_above_the_threshold_is_scaled_not_rejected(self):
+        # The rejection must be a floor on the degenerate case, not a cliff that swallows
+        # candidates which are merely imperfectly oriented.
+        obs = observables(4.0, 0.0)
+        obs["bacterial"]["orientation"] = UserSettings.ORIENTATION_reject_below + 0.01
+        obs["host"]["orientation"] = 1.0
+        fitness, components = fitness_damage.fitness_from_observables(obs)
+        self.assertNotIn("rejected", components)
+        self.assertGreater(fitness, UserSettings.DETACHED_FITNESS)
 
     def test_partial_orientation_scales_a_positive_score(self):
         obs = observables(4.0, 0.0)
@@ -278,3 +313,109 @@ class TestBindingProxyGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestOrientationIsAveragedOverFrames(unittest.TestCase):
+    """
+    The factor must be the mean of the per-frame factors, not the factor at the mean depth.
+
+    The cosine window is strongly non-linear and symmetric about b, so the two differ most in
+    exactly the cases the factor exists to catch. A peptide spending half the window buried
+    between the leaflets and half dissolved in water has a mean depth of almost precisely b and
+    was given 1.0: the maximum possible weight for a configuration that was never at the
+    interface at all.
+
+    compute_observables does the averaging over the real trajectory; this pins the arithmetic
+    property that makes it necessary, so a later simplification back to factor(mean) fails here.
+    """
+
+    def setUp(self):
+        from user.modules.compute_observables import orientation_factor
+        self.factor = orientation_factor
+        self.b = 1.75
+
+    def _both(self, depths):
+        import numpy as np
+        depths = np.asarray(depths, dtype=float)
+        at_mean = self.factor(float(depths.mean()), self.b)
+        averaged = float(np.mean([self.factor(float(d), self.b) for d in depths]))
+        return at_mean, averaged
+
+    def test_half_buried_half_dissolved_is_not_a_perfect_score(self):
+        at_mean, averaged = self._both([0.1] * 50 + [3.4] * 50)
+        self.assertAlmostEqual(at_mean, 1.0, places=3,
+                               msg="the setup no longer reproduces the mean-depth trap")
+        self.assertLess(averaged, 0.05,
+                        "a peptide never at the interface must not score near 1.0")
+
+    def test_a_peptide_leaving_during_the_window_is_discounted(self):
+        import numpy as np
+        at_mean, averaged = self._both(np.linspace(0.25, 3.25, 100))
+        self.assertGreater(at_mean, 0.99)
+        self.assertLess(averaged, 0.7)
+
+    def test_a_stable_peptide_is_essentially_unaffected(self):
+        import numpy as np
+        depths = np.random.default_rng(0).normal(self.b, 0.10, 200)
+        at_mean, averaged = self._both(depths)
+        self.assertGreater(averaged, 0.95)
+        self.assertLess(abs(at_mean - averaged), 0.05)
+
+
+class TestOnlyScoredRolesAffectTheFitness(unittest.TestCase):
+    """
+    user/membranes.py documents role="probe" as carried along for comparison and ignored by the
+    objectives. The orientation minimum took every entry in the file, so adding one probe at a
+    low orientation rescaled every fitness in the campaign, which looks exactly like the
+    peptides having got worse.
+    """
+
+    def setUp(self):
+        UserSettings.APPLY_orientation_factor = True
+        UserSettings.DAMAGE_host_tolerance = 0.0
+        UserSettings.DAMAGE_host_weight = 1.0
+        self._registry = dict(Membranes.MEMBRANES)
+
+    def tearDown(self):
+        Membranes.MEMBRANES.clear()
+        Membranes.MEMBRANES.update(self._registry)
+
+    def _with_probe(self, orientation):
+        obs = observables(2.0, 0.0)
+        obs["probe1"] = {"role": "probe",
+                         "delta_gamma": {"mean": 0.0, "err": 0.1},
+                         "orientation": orientation,
+                         "d_mem": {"mean": 1.0, "err": 0.1}}
+        return obs
+
+    def test_a_probe_membrane_does_not_scale_the_fitness(self):
+        Membranes.MEMBRANES["probe1"] = Membranes.MembraneDef(
+            name="probe1", gro="g", top="t", role="probe",
+            area_nm2=64.0, surften_free=(0.0, 1.0), thickness_nm=4.0)
+        without, _ = fitness_damage.fitness_from_observables(observables(2.0, 0.0))
+        with_probe, _ = fitness_damage.fitness_from_observables(self._with_probe(0.10))
+        self.assertAlmostEqual(without, with_probe)
+
+    def test_a_probe_cannot_reject_a_candidate(self):
+        Membranes.MEMBRANES["probe1"] = Membranes.MembraneDef(
+            name="probe1", gro="g", top="t", role="probe",
+            area_nm2=64.0, surften_free=(0.0, 1.0), thickness_nm=4.0)
+        fitness, components = fitness_damage.fitness_from_observables(self._with_probe(0.0))
+        self.assertNotIn("rejected", components)
+        self.assertGreater(fitness, UserSettings.DETACHED_FITNESS)
+
+    def test_the_target_still_counts(self):
+        obs = observables(2.0, 0.0)
+        obs["bacterial"]["orientation"] = 0.5
+        obs["host"]["orientation"] = 1.0
+        _fitness, components = fitness_damage.fitness_from_observables(obs)
+        self.assertAlmostEqual(components["orientation_factor"], 0.5)
+
+    def test_an_archived_run_falls_back_to_the_role_in_the_file(self):
+        # Re-scoring results whose membranes are no longer in the registry: the role recorded
+        # alongside the measurement is what decides, so a probe stays ignored.
+        obs = self._with_probe(0.0)
+        self.assertNotIn("probe1", Membranes.MEMBRANES)
+        fitness, components = fitness_damage.fitness_from_observables(obs)
+        self.assertNotIn("rejected", components)
+        self.assertGreater(fitness, UserSettings.DETACHED_FITNESS)

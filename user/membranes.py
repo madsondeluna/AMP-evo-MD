@@ -56,6 +56,19 @@ class MembraneDef:
         "target" -> the membrane the peptide is meant to act on (bacterial)
         "host"   -> the membrane it must spare (eukaryotic / erythrocyte mimic)
         "probe"  -> anything else carried along for comparison, ignored by the objectives
+
+    composition:
+        LIPID COUNTS in the built system, {resname: number of molecules}, as
+        tools/membrane.py calibrate emits them. Not mole fractions.
+
+        This field had two meanings in the repository at once: the placeholder entries below
+        were written as fractions summing to 1.0, while the protocol emits counts, and the one
+        piece of code that consumes it derives an area per lipid from the sum. With fractions
+        that gives 2 * area_nm2, which is off by two orders of magnitude and silently so. The
+        counts are the useful form, because area_nm2 divided by them is a quantity that can be
+        checked against what a bilayer of that composition should have.
+
+        The intended ratio belongs in notes, where it cannot be mistaken for a measurement.
     """
 
     def __init__(self, name, gro, top, role,
@@ -147,8 +160,11 @@ MEMBRANES = {
         gro="membrane_bacterial.gro",
         top="membrane_bacterial.top",
         role="target",
-        composition={"POPE": 0.70, "POPG": 0.20, "CDL2": 0.10},
-        notes="Gram-negative inner membrane mimic. Anionic, no sterol.",
+        # Counts are filled in by tools/protocol.sh along with the measurements; until then
+        # this membrane is uncalibrated and nothing will run with it.
+        composition=None,
+        notes=("Gram-negative inner membrane mimic. Anionic, no sterol. "
+               "Intended ratio POPE:POPG:CDL2 = 70:20:10."),
     ),
 
     "host": MembraneDef(
@@ -156,10 +172,10 @@ MEMBRANES = {
         gro="membrane_host.gro",
         top="membrane_host.top",
         role="host",
-        composition={"POPC": 0.60, "DPSM": 0.10, "CHOL": 0.30},
-        notes=("Erythrocyte outer-leaflet mimic. The sterol fraction is the main "
-               "determinant of resistance to lysis and is what makes this a hemolysis "
-               "proxy rather than a generic neutral membrane."),
+        composition=None,
+        notes=("Erythrocyte outer-leaflet mimic. Intended ratio POPC:DPSM:CHOL = 60:10:30. "
+               "The sterol fraction is the main determinant of resistance to lysis and is "
+               "what makes this a hemolysis proxy rather than a generic neutral membrane."),
     ),
 }
 
@@ -245,6 +261,18 @@ def load_registry(path):
 
     MEMBRANES.clear()
     MEMBRANES.update(registry)
+
+    # usersettings.membrane_types is a snapshot of membrane_names() taken at import, and it is
+    # what the measurement modules loop over while the objectives read MEMBRANES. Leaving it
+    # stale means a run after a registry swap would measure one set of membranes and score
+    # another. Harmless while only calibrate.py swaps registries, since it does not measure,
+    # and a trap the first time anything else does.
+    try:
+        import user.usersettings as UserSettings
+        UserSettings.membrane_types = membrane_names()
+    except ImportError:
+        pass
+
     return registry
 
 
@@ -304,3 +332,40 @@ def require_all_built():
                          "into place"),
                     fix=("copy the equilibrated .gro and .top there; this is the last step "
                          "tools/protocol.sh prints when it finishes"))
+
+    # area_nm2 is typed in by hand from the protocol output, and it is the denominator of
+    # delta_gamma_work. Nothing compared it against the box of the structure it describes, so a
+    # mistyped digit, or a membrane rebuilt at a different area after the number was recorded,
+    # gave a wrong answer with no symptom: at constant area the reference surface tension was
+    # also measured at the other area, so delta_gamma itself stops meaning anything.
+    import core.gromacs as Gromacs
+
+    mismatched = []
+    for name in membrane_names():
+        membrane = MEMBRANES[name]
+        try:
+            box = Gromacs.GRO_read_box(membrane.gro_path())
+            # GRO_read_box returns strings. Converted once here, because formatting them as
+            # floats further down is what the error path itself used to fail on.
+            box_x, box_y = float(box[0]), float(box[1])
+            measured = box_x * box_y
+        except Exception:
+            # Reading the box is a check, not a requirement; a file this helper cannot parse
+            # should not stop a run that would otherwise work. The conversion is inside the
+            # guard too, because an unparseable box line fails there rather than in the read.
+            continue
+        if abs(measured - membrane.area_nm2) > 0.01 * max(measured, 1e-9):
+            mismatched.append(
+                "%s: area_nm2 = %.4f, but %s has a box of %.4f x %.4f = %.4f nm2 (%.1f%% apart)"
+                % (name, membrane.area_nm2, os.path.basename(membrane.gro_path()),
+                   box_x, box_y, measured,
+                   100.0 * abs(measured - membrane.area_nm2) / max(measured, 1e-9)))
+
+    if mismatched:
+        Errors.fail("a membrane's recorded area does not match the structure it names",
+                    where="\n".join(mismatched),
+                    why=("area_nm2 divides the work term, and the reference surface tension was "
+                         "measured on a box of one particular area. A structure at a different "
+                         "area makes delta_gamma a difference between two unrelated states."),
+                    fix=("re-run tools/protocol.sh for that membrane and paste the MembraneDef "
+                         "it emits, or copy the structure the current numbers were measured on"))

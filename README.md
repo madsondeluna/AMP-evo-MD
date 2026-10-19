@@ -1,4 +1,4 @@
-# amp-evomd
+# amp-evo-md
 
 Physics-based design of antimicrobial peptides by embedding coarse-grained molecular dynamics
 in a genetic algorithm.

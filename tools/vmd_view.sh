@@ -2,9 +2,10 @@
 #
 # Open a coarse-grained membrane in VMD with Martini-friendly representations, optionally with a
 # peptide and a trajectory. Lipids are drawn as beads coloured by type, the peptide is
-# highlighted, water is hidden, ions are small, and the periodic box is drawn. It is meant to make
-# this pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation
-# setup, with this repository's file names.
+# highlighted, water is hidden, ions are small, and the periodic box is drawn, all in a chalky
+# matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
+# pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
+# with this repository's file names.
 #
 # Usage:
 #   tools/vmd_view.sh prep/bacterial/equil.gro                                   # just the membrane
@@ -77,21 +78,21 @@ mol delrep 0 top
 mol representation VDW 1.0 12.0
 mol color ResName
 mol selection "$lipids"
-mol material Opaque
+mol material AOChalky
 mol addrep top
 
 # peptide: highlighted in yellow, slightly larger, so it stands out against the bilayer
 mol representation VDW 1.1 16.0
 mol color ColorID 4
 mol selection "$pept"
-mol material Opaque
+mol material AOChalky
 mol addrep top
 
 # ions: small beads coloured by name
 mol representation VDW 0.6 12.0
 mol color Name
 mol selection "$ions"
-mol material Opaque
+mol material AOChalky
 mol addrep top
 
 # water: hidden by default. To show it as faint points, uncomment the four lines below.
@@ -105,9 +106,20 @@ mol addrep top
 # Display and periodic box.
 # ---------------------------------------------------------------------------
 display projection Orthographic
-display depthcue on
+display depthcue off
 color Display Background white
 axes location Off
+
+# Chalky, matte look. The AOChalky material on the representations above gives the clay/chalk
+# surface; ambient occlusion is the soft self-shadowing in the creases that makes it read as
+# matte rather than plastic, and a directional shadow adds depth. These render live in the
+# interactive window on a recent VMD, and fully in a ray-traced snapshot. For a clean still,
+# use File > Render with the Tachyon or TachyonLOptiXInternal renderer, or from the console:
+#   render TachyonInternal view.tga
+display shadows on
+display ambientocclusion on
+display aoambient 0.9
+display aodirect 0.3
 
 # pbctools ships with VMD. Wrap molecules into the box so the bilayer is continuous, then draw
 # the box. Both are wrapped in catch so a VMD build without pbctools still opens the system.

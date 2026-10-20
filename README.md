@@ -791,7 +791,7 @@ The thread layout is chosen automatically: `protocol.sh` picks a total thread co
 set by hand. Override with `NT=<n>` only for a specific layout, and keep it divisible by
 `OMP_NUM_THREADS`.
 
-At the measured rate this is about 1.1 h of wall time on 10 cores (see
+At the measured rate this is about 2.75 h of wall time on 10 cores (500 ns at 4357 ns/day; see
 [Resource planning](#resource-planning)), plus the build and minimisation. When it finishes, the
 equilibrated structure is `prep/bacterial/equil.gro`; copy it and its topology into place and
 commit them, so the membrane travels with the code:

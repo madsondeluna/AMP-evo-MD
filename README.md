@@ -1096,7 +1096,7 @@ campaign_damage/
     fitness                      the score and its components
     production_bacterial.gro     final coordinates, one set per membrane
     production_bacterial.edr     energies: surface tension, box, interaction terms
-    production_bacterial.tpr     the run input, carries topology and bonds (load this in VMD)
+    production_bacterial.tpr     the run input, carries topology and bonds (cg_bonds can read it for sticks)
     production_bacterial.log     mdrun log: performance, decomposition, warnings
     production_bacterial.xtc     the trajectory, ONLY when WRITE_XTC = True
     production_host.*            the same set for the second membrane, when two are used
@@ -1191,15 +1191,15 @@ finishes this week, and a mean hides exactly that.
 `tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, in VMD with Martini-friendly
 representations. It takes a **structure** and an **optional trajectory**, works out what each
 residue is (lipid, water, ion, or peptide) from its name, and builds a separate representation for
-each lipid type present plus one each for the peptide, the ions and the water, so every component
-is individually toggleable and the same command works on a bare bilayer and on a candidate run.
+each lipid type present, plus the peptide, the ions (Na and Cl separately) and the water, so every
+component is individually toggleable and the same command works on a bare bilayer and on a candidate run.
 
 ![How tools/vmd_view.sh is used and what it draws](docs/vmd_view.png)
 
 **What it draws.** One representation per lipid type present, each in a flat colour of its own so
 the types are visually separate and can be toggled independently in `Graphics > Representations`.
-Lipids are drawn as licorice sticks (the Martini-tutorial look) once the Martini bonds are present,
-and as small beads otherwise (see the next paragraph). The peptide is in yellow and slightly larger;
+Lipids are drawn as VDW beads by default, with no external setup; they become licorice sticks (the
+Martini-tutorial look) only when the Martini bonds are added (see the next paragraph). The peptide is in yellow and slightly larger;
 ions as small beads with Na and Cl in their own colours; and water as a transparent QuickSurf surface, all in a chalky
 matte style (VMD's `AOChalky` material with ambient occlusion, orthographic projection), except the
 water, which is transparent. Set `VIEW_HIDE_WATER=1` to drop the water surface. The periodic box outline is not drawn by default; set

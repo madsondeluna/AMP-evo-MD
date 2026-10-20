@@ -1428,6 +1428,77 @@ A command exited with status 1.
 A traceback still means a bug in this repository rather than something to fix in the setup, and
 is left alone deliberately: dressing one up as an operator error would hide it.
 
+## Analysis and figures
+
+The run writes the raw records (one `observables.json` per candidate, one row per evaluation in
+the progress file). Turning those into figures is a separate, three-step workflow that never
+re-runs a simulation to redraw a plot. Each step is one script under `tools/`.
+
+### 1. Aggregate the campaign into a saved dataset
+
+```bash
+python tools/amp_dataset.py output/        # output/ is core.settings.output_dir
+```
+
+This walks the campaign, reads every `observables.json`, joins the generation and fitness from
+the progress file, computes the sequence descriptors (net charge, hydrophobic moment, residue
+group fractions) and the derived damage and selectivity, and writes a small, self-describing
+dataset under `output/analysis/`:
+
+| File | One row per | Holds |
+|------|-------------|-------|
+| `cohort.csv` | candidate | every scalar observable for each membrane role, the descriptors, the GA metadata, damage, host damage, selectivity |
+| `sequences.csv` | candidate | the sequence and its per-residue counts over the active alphabet |
+| `ga_timeline.csv` | GA iteration | best, parents and mean fitness, turnover, diversity, composition |
+| `positional.csv` | group and position | residue-group frequency by position, final generation |
+| `metadata.json` | the campaign | GROMACS and martinize2 build, loaded modules, the membrane-role map, the selectivity definition, the data dictionary, which candidates kept a trajectory |
+
+These five files are the dataset. They are plain text and portable off the cluster, so the
+measurements and the metadata travel together. Everything downstream reads only these files.
+
+### 2. Extract per-candidate trajectory series (only for a shortlist)
+
+The cohort and amino-acid figures need nothing beyond step 1. The per-candidate detail figures
+that look inside one simulation (density profile, tail order, tilt, contacts, interaction-energy
+time series, area-per-lipid and thickness maps, binding PMF) need the trajectory, which a full
+campaign does not keep (`WRITE_XTC = False` by default; see
+[Where everything lands](#where-everything-lands)). Pick a shortlist from the cohort figures,
+re-run just those few with `WRITE_XTC = True`, then:
+
+```bash
+python tools/amp_traj.py output/ --candidate <SEQ> --dataset output/analysis --membrane bacterial
+```
+
+Each series is computed once and saved to `output/analysis/<SEQ>/` (geometry series need
+MDAnalysis, energy series need the `gmx` binary; each is skipped with a logged reason if its
+dependency or input is absent). The insertion-depth series and the binding PMF are recovered from
+files the run already keeps, so a candidate with no trajectory still gets those.
+
+### 3. Render the figures from the saved dataset
+
+```bash
+python tools/amp_report.py --dataset output/analysis --group all --sheet
+python tools/amp_report.py --dataset output/analysis --group candidate --candidate <SEQ>
+```
+
+Every figure reads only the files from steps 1 and 2; redrawing never recomputes a measurement.
+Figures are grouped so a run can render just what it needs:
+
+| Group | Codes | What it shows | Needs |
+|-------|-------|---------------|-------|
+| `membrane` | E1-E3 | membrane equilibration and reference values | dataset (E3); equilibration xvg for E1-E2 |
+| `ga` | E4-E8 | optimiser performance, turnover, diversity, composition, positional frequency | `ga_timeline.csv`, `positional.csv` |
+| `cohort` | C1-C8 | compare the whole cohort (100+ AMPs): ranked heatmap, distributions, damage-vs-selectivity Pareto, shortlist, PCA, correlations, charge-vs-selectivity, top sequences | `cohort.csv`, `sequences.csv` |
+| `aa` | A1-A7 | amino-acid selectivity (bacterial vs host), favoured vs rejected, frequency, populations over generations, by group, positional, pair co-occurrence | `cohort.csv`, `sequences.csv` |
+| `candidate` | P1-P13 | per-candidate detail for one `--candidate` | the series from step 2 (skips any that is absent) |
+
+All figures share the vendored Nature theme in `tools/ampstyle.py`: the NPG palette with reserved
+role colours (bacterial red, host dark blue), NPG-derived continuous ramps, thin left and bottom
+spines, outward ticks, no grid, and no bar charts. Magnitudes are drawn as Cleveland dot plots or
+lollipops and two-group comparisons as dumbbells, so the selectivity gap reads directly. The
+module depends only on matplotlib and numpy, so the figures render the same way on a workstation,
+on a login node, or in a headless re-analysis.
+
 ## Troubleshooting
 
 **Start here for anything that happens during a run.** `steps.jsonl` in the candidate's directory
@@ -1803,6 +1874,9 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
 | Watch a campaign | `python tools/ga_report.py <dir>/output.txt --outdir report` |
 | See which step a candidate is on | `tail -1 <dir>/<SEQUENCE>/steps.jsonl` |
 | Re-score under the other objective | `python calibrate.py <dir> --objective binding` |
+| Aggregate a campaign into a saved dataset | `python tools/amp_dataset.py output/` |
+| Extract a candidate's trajectory series | `python tools/amp_traj.py output/ --candidate <SEQ> --dataset output/analysis` |
+| Render the analysis figures | `python tools/amp_report.py --dataset output/analysis --group all --sheet` |
 
 ## References
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Open a coarse-grained membrane in VMD with Martini-friendly representations, optionally with a
-# peptide and a trajectory. Lipids are drawn as licorice sticks (small beads for a bond-less .gro)
-# coloured by type, the peptide highlighted, water as a transparent surface, and ions small, all in
-# a chalky matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
+# peptide and a trajectory. Lipids are drawn as VDW beads coloured by type (sticks are optional, via
+# cg_bonds; see below), the peptide highlighted, water as a transparent surface, and ions small, all
+# in a chalky matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
 # pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
 # with this repository's file names.
 #
@@ -27,8 +27,9 @@
 #     The bilayer is kept centred over the run and every representation is smoothed (5-frame window).
 #   - One representation is created per lipid type present, plus peptide, ions and water, each
 #     toggleable in Graphics > Representations.
-#   - Lipids default to Licorice sticks (once bonds exist); set VIEW_LIPID_REP to try another style,
-#     e.g. VIEW_LIPID_REP="Bonds 1.0 12.0" or VIEW_LIPID_REP="VDW 1.0 20.0".
+#   - Lipids are drawn as VDW beads by default (no external script needed). Sticks need Martini
+#     bonds, which are optional and off unless cg_bonds is set up (see above). Force any style with
+#     VIEW_LIPID_REP, e.g. VIEW_LIPID_REP="Bonds 1.0 12.0".
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
 #   - Set VMD=/path/to/vmd if vmd is not on PATH (for example a module's binary).
@@ -90,13 +91,6 @@ if [ -n "${VIEW_BONDS}" ] && [ -f "${VIEW_BONDS}" ]; then
 fi
 VIEW_GMX="$(command -v gmx || true)"
 
-if [ -z "${VIEW_CG_BONDS}" ] || [ -z "${VIEW_BONDS_ABS}" ]; then
-    echo "note: lipids will be drawn as beads (no Martini bonds added)." >&2
-    echo "      For sticks, make cg_bonds-v5.tcl available (CG_BONDS=/path, or put it in" >&2
-    echo "      tools/vmd/) and provide a .tpr or .top (auto-detected beside the structure," >&2
-    echo "      or VIEW_BONDS=...). A .tpr is the most reliable source." >&2
-fi
-
 TCL="$(mktemp "${TMPDIR:-/tmp}/vmd_cg.XXXXXX.tcl")"
 trap 'rm -f "${TCL}"' EXIT
 
@@ -152,12 +146,18 @@ if {[info exists env(VIEW_CG_BONDS)] && $env(VIEW_CG_BONDS) ne "" && [file exist
 # characters like NA+ / CL-) are double-quoted, which VMD's selection parser requires.
 # ---------------------------------------------------------------------------
 set lipid_order {POPE POPG POPC POPS CDL0 CDL2 DPSM CHOL}
-array set lipid_color {POPE 10  POPG 11  POPC 3  POPS 7  CDL0 13  CDL2 14  DPSM 5  CHOL 6}
+array set lipid_color {POPE 23  POPG 32  POPC 6  POPS 29  CDL0 25  CDL2 13  DPSM 19  CHOL 14}
 
 set lipids "resname [join $lipid_order { }]"
 set water  "resname W WF PW"
 set ions   {resname NA CL ION "NA+" "CL-" SOD CLA}
 set pept   "not ($lipids or $water or $ions)"
+
+# ions split by sign so Na and Cl carry their own colour (names with + / - are double-quoted)
+set ion_cations {resname NA "NA+" SOD ION}
+set ion_anions  {resname CL "CL-" CLA}
+set ion_cation_color 5    ;# Na: tan
+set ion_anion_color  9    ;# Cl: pink
 
 mol delrep 0 top
 
@@ -201,10 +201,16 @@ mol selection $pept
 mol material AOChalky
 mol addrep top
 
-# ions: small beads coloured by name
+# ions: small beads, Na and Cl each in their own colour
 mol representation VDW 0.6 16.0
-mol color Name
-mol selection $ions
+mol color ColorID $ion_cation_color
+mol selection $ion_cations
+mol material AOChalky
+mol addrep top
+
+mol representation VDW 0.6 16.0
+mol color ColorID $ion_anion_color
+mol selection $ion_anions
 mol material AOChalky
 mol addrep top
 

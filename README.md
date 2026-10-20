@@ -1200,9 +1200,9 @@ is individually toggleable and the same command works on a bare bilayer and on a
 the types are visually separate and can be toggled independently in `Graphics > Representations`.
 Lipids are drawn as licorice sticks (the Martini-tutorial look) once the Martini bonds are present,
 and as small beads otherwise (see the next paragraph). The peptide is in yellow and slightly larger;
-ions as small beads coloured by name; and water as a transparent QuickSurf surface, all in a chalky
-matte style (VMD's `AOChalky` material with ambient occlusion, orthographic projection). Set
-`VIEW_HIDE_WATER=1` to drop the water surface. The periodic box outline is not drawn by default; set
+ions as small beads with Na and Cl in their own colours; and water as a transparent QuickSurf surface, all in a chalky
+matte style (VMD's `AOChalky` material with ambient occlusion, orthographic projection), except the
+water, which is transparent. Set `VIEW_HIDE_WATER=1` to drop the water surface. The periodic box outline is not drawn by default; set
 `VIEW_SHOW_BOX=1` to draw it. To try a different lipid style, set `VIEW_LIPID_REP`, for example
 `"Bonds 1.0 12.0"` or `"VDW 1.0 20.0"`.
 

@@ -84,7 +84,7 @@ axC = panel(pC, "3 · WHAT YOU SEE", "Representations", "#9a3b8f")
 rows = [
     (C_LIP, "Lipids", "one rep per type, by colour"),
     (C_PEP, "Peptide", "yellow, slightly larger"),
-    (C_ION, "Ions", "small beads, by name"),
+    (C_ION, "Ions", "Na and Cl, own colours"),
     (C_WAT, "Water", "transparent QuickSurf slab"),
 ]
 yy = 0.64

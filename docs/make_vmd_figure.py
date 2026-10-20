@@ -26,7 +26,7 @@ def rule(y, x0=LX, x1=RX, c="#e4e4df", lw=1.1):
 fig.text(LX, 0.945, "Visualising a membrane in VMD",
          fontsize=17, fontweight="bold", color=INK)
 fig.text(LX, 0.902,
-         "tools/vmd_view.sh  —  Martini-friendly representations, auto-detected from residue names. "
+         "tools/vmd_view.sh  ·  Martini-friendly representations, auto-detected from residue names. "
          "Works on a bare membrane or on a peptide in a membrane.",
          fontsize=10.5, color=MUTE)
 rule(0.875)
@@ -49,9 +49,9 @@ def panel(rect, tag, title, accent):
 # panel A: inputs
 axA = panel(pA, "1 · INPUTS", "What you give it", "#2E6FAE")
 axA.text(0.06, 0.63, "structure", fontsize=10.5, fontweight="bold", color="#333", transform=axA.transAxes)
-axA.text(0.06, 0.555, "equil.gro   or   min.tpr", fontsize=10, color="#222",
+axA.text(0.06, 0.555, "equil.gro   (coordinates)", fontsize=10, color="#222",
          family="DejaVu Sans Mono", transform=axA.transAxes)
-axA.text(0.06, 0.475, "a .tpr keeps the bonds, so beads\nare drawn connected",
+axA.text(0.06, 0.475, "VMD can't open a .tpr; the bonds\ncome from cg_bonds (see RUN)",
          fontsize=8.8, color=MUTE, transform=axA.transAxes, va="top")
 axA.text(0.06, 0.30, "trajectory", fontsize=10.5, fontweight="bold", color="#333", transform=axA.transAxes)
 axA.text(0.06, 0.225, "equil.xtc  (optional)", fontsize=10, color="#222",
@@ -68,10 +68,10 @@ for t, c in cmd:
     axB.text(0.055, yy, t, fontsize=9.5, color=c, family="DejaVu Sans Mono", transform=axB.transAxes)
     yy -= 0.072
 notes = [
-    "one representation per lipid type,",
-    "plus peptide, ions and water",
-    "AOChalky matte + ambient occlusion",
-    "trajectory centred and smoothed (5)",
+    "one rep per lipid type + peptide,",
+    "ions and water (each toggleable)",
+    "sticks via cg_bonds-v5.tcl (CG_BONDS)",
+    "trajectory centred, smoothed (5)",
     "VIEW_HIDE_WATER=1 · VIEW_SHOW_BOX=1",
 ]
 yy = 0.44
@@ -126,8 +126,8 @@ callout(0.145, 0.672, 0.288, "STILL IMAGE  (from the VMD console)",
         "#9a3b8f", "render TachyonInternal view.tga", stacked=True)
 
 fig.text(0.5, 0.045,
-         "The bacterial reference membrane ships with the repository, so the command above runs "
-         "straight after a pull — no simulation needed first.",
+         "The reference membrane ships with the repository. VMD draws no bonds for a bare .gro, so "
+         "make cg_bonds-v5.tcl available (CG_BONDS=...) to render the Martini sticks.",
          ha="center", fontsize=9.3, color=MUTE, style="italic")
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vmd_view.png")

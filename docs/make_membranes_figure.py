@@ -204,7 +204,7 @@ def membrane_panel(ax, title, subtitle, lines, charge_lines, accent):
 pw, pgap = (RX - LX - 0.03) / 2.0, 0.03
 axb = fig.add_axes([LX, 0.050, pw, 0.295])
 membrane_panel(
-    axb, "Bacterial target — POPE:POPG 3:1",
+    axb, "Bacterial target · POPE:POPG 3:1",
     "Gram-negative inner-membrane mimic. 198 lipids, ~5285 beads, 0.15 M NaCl.",
     [("POPE (zwitterionic)", "140"), ("POPG (anionic, −1 each)", "58"),
      ("W  (Martini water)", "2847"), ("Na⁺  /  Cl⁻", "60 / 2")],
@@ -214,7 +214,7 @@ membrane_panel(
 
 axh = fig.add_axes([LX + pw + pgap, 0.050, pw, 0.295])
 membrane_panel(
-    axh, "Host — POPC (neutral)",
+    axh, "Host · POPC (neutral)",
     "Mammalian-membrane mimic. Cholesterol and sphingomyelin deferred.",
     [("POPC (zwitterionic)", "194"), ("W  (Martini water)", "~2716"),
      ("Na⁺  /  Cl⁻", "equal (salt only)")],

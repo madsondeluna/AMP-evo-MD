@@ -1198,43 +1198,52 @@ is individually toggleable and the same command works on a bare bilayer and on a
 
 **What it draws.** One representation per lipid type present, each in a flat colour of its own so
 the types are visually separate and can be toggled independently in `Graphics > Representations`.
-Lipids are drawn as licorice sticks (the Martini-tutorial look) when the structure carries bonds (a
-`.tpr`), and as small beads for a bond-less `.gro` (VMD finds no bonds for coarse-grained beads by
-distance). The peptide is in yellow and slightly larger; ions as small beads coloured by name; and
-water as a transparent QuickSurf surface, all in a chalky matte style (VMD's `AOChalky` material
-with ambient occlusion, orthographic projection). Set `VIEW_HIDE_WATER=1` to drop the water
-surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to draw it. To try
-a different lipid style without editing, set `VIEW_LIPID_REP`, for example `"Bonds 1.0 12.0"` or
-`"VDW 1.0 20.0"`.
+Lipids are drawn as licorice sticks (the Martini-tutorial look) once the Martini bonds are present,
+and as small beads otherwise (see the next paragraph). The peptide is in yellow and slightly larger;
+ions as small beads coloured by name; and water as a transparent QuickSurf surface, all in a chalky
+matte style (VMD's `AOChalky` material with ambient occlusion, orthographic projection). Set
+`VIEW_HIDE_WATER=1` to drop the water surface. The periodic box outline is not drawn by default; set
+`VIEW_SHOW_BOX=1` to draw it. To try a different lipid style, set `VIEW_LIPID_REP`, for example
+`"Bonds 1.0 12.0"` or `"VDW 1.0 20.0"`.
 
-**Try it now.** The equilibrated bacterial reference membrane is committed, so this runs straight
-after a clone or pull, with nothing to build first:
+**Drawing the Martini bonds (sticks).** VMD cannot recover coarse-grained bonds from a `.gro` (the
+beads sit too far apart for its distance search) and it does not read a `.tpr`, so a bare membrane
+shows only as beads. This is the same limitation the Martini tutorials solve with
+[`cg_bonds-v5.tcl`](https://cgmartini.nl/docs/downloads/tools/visualization.html), which injects the
+bonds from the topology. Make that script available (`CG_BONDS=/path/to/cg_bonds-v5.tcl`, or drop it
+in `tools/vmd/`) and `vmd_view.sh` calls it automatically, taking the bonds from a `.tpr` (via `gmx
+dump`, the reliable route) or a `.top` found beside the structure (override with `VIEW_BONDS=...`).
+With the bonds added the lipids render as sticks; without the script they fall back to beads.
+
+**Try it now.** Point it at a membrane whose `.tpr` sits beside the `.gro`, so the bonds are added
+automatically:
 
 ```bash
-tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro      # the committed reference
+tools/vmd_view.sh prep/bacterial/equil.gro                             # bonds from equil.tpr beside it
+tools/vmd_view.sh prep/bacterial/equil.gro prep/bacterial/equil.xtc    # the same, with the trajectory (movie)
 ```
 
-Other inputs, once you have run the pipeline:
+The committed reference ships as a `.gro` with its `.top` (no `.tpr`), so it shows sticks only if
+`cg_bonds-v5.tcl` can parse that `.top`; otherwise it shows beads:
 
 ```bash
-tools/vmd_view.sh prep/bacterial/equil.gro                             # a membrane you just built (one frame)
-tools/vmd_view.sh prep/bacterial/equil.tpr prep/bacterial/equil.xtc    # the movie: structure + trajectory
-tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
-                  output/<SEQ>/production_bacterial.xtc                 # a candidate: peptide in the membrane
+tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro      # committed reference
 ```
 
-To watch the equilibration as a movie rather than a single frame, pass the `.tpr` (which carries
-the bonds, so the beads stay connected) together with its `.xtc`. The equilibration recipe writes
-one frame every 50 000 steps, so a 500 ns run gives a few hundred frames to scrub through.
+A candidate run is a peptide in a membrane:
 
-Prefer the `.tpr` over the `.gro` as the structure: it carries the bonds, so the beads are drawn
-connected rather than loose (a `.gro` has no connectivity, which is still perfectly readable for a
-membrane). To watch the peptide interact with the bilayer over time you need the trajectory, which
-exists only when `WRITE_XTC = True` (see [Where everything lands](#where-everything-lands)); re-run
-the candidates you want to inspect with it on, since a full campaign keeps no trajectories. Set
-`VMD=/path/to/vmd` if `vmd` is not on the PATH, for example a module's binary. For a clean still,
-use `File > Render` with the Tachyon renderer, or `render TachyonInternal view.tga` from the VMD
-console.
+```bash
+tools/vmd_view.sh output/<SEQ>/production_bacterial.gro \
+                  output/<SEQ>/production_bacterial.xtc
+```
+
+To watch the equilibration as a movie, pass the `.gro` and its `.xtc`; the recipe writes one frame
+every 50 000 steps, so a 500 ns run gives a few hundred frames. The bilayer is kept centred over the
+run and every representation is smoothed over a 5-frame window. A candidate's trajectory exists only
+when `WRITE_XTC = True` (see [Where everything lands](#where-everything-lands)); a full campaign
+keeps no trajectories, so re-run the candidates you want to inspect with it on. Set `VMD=/path/to/vmd`
+if `vmd` is not on the PATH, for example a module's binary. For a clean still, use `File > Render`
+with the Tachyon renderer, or `render TachyonInternal view.tga` from the VMD console.
 
 ### Diagnosing a failure
 

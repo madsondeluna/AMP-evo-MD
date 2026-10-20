@@ -7,25 +7,28 @@
 # pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
 # with this repository's file names.
 #
-# Usage:
-#   tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro            # the committed reference
-#   tools/vmd_view.sh prep/bacterial/equil.gro                                   # a membrane you just built
-#   tools/vmd_view.sh prep/bacterial/min.tpr prep/bacterial/equil.xtc            # with a trajectory
-#   tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
-#                     output/<SEQ>/production_bacterial.xtc                      # a peptide in a membrane
+# The structure is always a coordinate file VMD can read (.gro); VMD cannot open a .tpr directly.
+# To draw Martini sticks, the bonds are injected from the topology by cg_bonds-v5.tcl (see below).
 #
-# The first line runs straight after a clone or pull: the equilibrated bacterial reference membrane
-# ships with the repository, so there is nothing to build first.
+# Usage:
+#   tools/vmd_view.sh prep/bacterial/equil.gro                                   # bonds from equil.tpr beside it
+#   tools/vmd_view.sh prep/bacterial/equil.gro prep/bacterial/equil.xtc          # ...with the trajectory (movie)
+#   tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro            # committed reference (.top beside it)
+#   tools/vmd_view.sh output/<SEQ>/production_bacterial.gro \
+#                     output/<SEQ>/production_bacterial.xtc                      # a candidate: peptide in a membrane
 #
 # Notes:
-#   - A .tpr as the structure carries the bonds, so the beads are drawn connected. A .gro has no
-#     connectivity, so beads show without sticks, which is still perfectly readable for a membrane.
-#   - To watch the trajectory (the "movie"), pass a .tpr and its .xtc, e.g. equil.tpr equil.xtc.
+#   - Martini bonds. VMD draws no bonds for a coarse-grained .gro, so the lipids look like beads
+#     until cg_bonds-v5.tcl adds the bonds from the topology. Make it available with
+#     CG_BONDS=/path/to/cg_bonds-v5.tcl, or drop it in tools/vmd/. The bonds are read from a .tpr
+#     (via gmx dump, most reliable) or a .top, auto-detected beside the structure, or VIEW_BONDS=...
+#     Without it the lipids fall back to beads, which is still perfectly readable for a membrane.
+#   - To watch the trajectory (the "movie"), pass the .gro and its .xtc, e.g. equil.gro equil.xtc.
 #     The bilayer is kept centred over the run and every representation is smoothed (5-frame window).
 #   - One representation is created per lipid type present, plus peptide, ions and water, each
 #     toggleable in Graphics > Representations.
-#   - Lipids default to Licorice sticks; set VIEW_LIPID_REP to try another style, e.g.
-#     VIEW_LIPID_REP="Bonds 1.0 12.0" or VIEW_LIPID_REP="VDW 1.0 20.0".
+#   - Lipids default to Licorice sticks (once bonds exist); set VIEW_LIPID_REP to try another style,
+#     e.g. VIEW_LIPID_REP="Bonds 1.0 12.0" or VIEW_LIPID_REP="VDW 1.0 20.0".
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
 #   - Set VMD=/path/to/vmd if vmd is not on PATH (for example a module's binary).
@@ -52,6 +55,48 @@ VIEW_STRUCT="$(cd "$(dirname "${STRUCT}")" && pwd)/$(basename "${STRUCT}")"
 VIEW_TRAJ=""
 [ -z "${TRAJ}" ] || VIEW_TRAJ="$(cd "$(dirname "${TRAJ}")" && pwd)/$(basename "${TRAJ}")"
 
+# ---------------------------------------------------------------------------
+# Martini bonds. VMD cannot recover coarse-grained bonds from a .gro (beads sit too far apart for
+# its distance search) and does not read a .tpr, so a bare membrane shows only as beads. The Martini
+# cg_bonds-v5.tcl script injects the bonds from the topology; point CG_BONDS at it, or drop it in
+# tools/vmd/, and the lipids are then drawn as sticks. The bonds are taken from a .tpr (via gmx dump,
+# the robust route) or from a .top, auto-detected beside the structure; override with VIEW_BONDS.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CG_BONDS="${CG_BONDS:-}"
+if [ -z "${CG_BONDS}" ] && [ -f "${SCRIPT_DIR}/vmd/cg_bonds-v5.tcl" ]; then
+    CG_BONDS="${SCRIPT_DIR}/vmd/cg_bonds-v5.tcl"
+fi
+
+VIEW_BONDS="${VIEW_BONDS:-}"
+if [ -z "${VIEW_BONDS}" ]; then
+    _base="${STRUCT%.*}"
+    if   [ -f "${_base}.tpr" ];                        then VIEW_BONDS="${_base}.tpr"
+    elif [ -f "$(dirname "${STRUCT}")/equil.tpr" ];    then VIEW_BONDS="$(dirname "${STRUCT}")/equil.tpr"
+    elif [ -f "${_base}.top" ];                        then VIEW_BONDS="${_base}.top"
+    fi
+fi
+
+export VIEW_CG_BONDS VIEW_BONDS_ABS VIEW_BONDS_KIND VIEW_GMX
+VIEW_CG_BONDS=""
+[ -z "${CG_BONDS}" ] || [ ! -f "${CG_BONDS}" ] || VIEW_CG_BONDS="$(cd "$(dirname "${CG_BONDS}")" && pwd)/$(basename "${CG_BONDS}")"
+VIEW_BONDS_ABS=""
+VIEW_BONDS_KIND=""
+if [ -n "${VIEW_BONDS}" ] && [ -f "${VIEW_BONDS}" ]; then
+    VIEW_BONDS_ABS="$(cd "$(dirname "${VIEW_BONDS}")" && pwd)/$(basename "${VIEW_BONDS}")"
+    case "${VIEW_BONDS}" in
+        *.tpr) VIEW_BONDS_KIND="tpr" ;;
+        *)     VIEW_BONDS_KIND="top" ;;
+    esac
+fi
+VIEW_GMX="$(command -v gmx || true)"
+
+if [ -z "${VIEW_CG_BONDS}" ] || [ -z "${VIEW_BONDS_ABS}" ]; then
+    echo "note: lipids will be drawn as beads (no Martini bonds added)." >&2
+    echo "      For sticks, make cg_bonds-v5.tcl available (CG_BONDS=/path, or put it in" >&2
+    echo "      tools/vmd/) and provide a .tpr or .top (auto-detected beside the structure," >&2
+    echo "      or VIEW_BONDS=...). A .tpr is the most reliable source." >&2
+fi
+
 TCL="$(mktemp "${TMPDIR:-/tmp}/vmd_cg.XXXXXX.tcl")"
 trap 'rm -f "${TCL}"' EXIT
 
@@ -73,6 +118,31 @@ if {$traj ne ""} {
 set everything [atomselect top all]
 $everything set radius 2.0
 $everything delete
+
+# ---------------------------------------------------------------------------
+# Add the Martini bonds with cg_bonds-v5.tcl, if it and a topology were found. Without them a
+# coarse-grained .gro has no connectivity, so the lipids can only be drawn as beads (not sticks).
+# cg_bonds adds the bonds to the loaded molecule; the bond count checked below then turns on the
+# stick (Licorice) representation.
+# ---------------------------------------------------------------------------
+if {[info exists env(VIEW_CG_BONDS)] && $env(VIEW_CG_BONDS) ne "" && [file exists $env(VIEW_CG_BONDS)]
+        && [info exists env(VIEW_BONDS_ABS)] && $env(VIEW_BONDS_ABS) ne ""} {
+    if {[catch {source $env(VIEW_CG_BONDS)} _e]} {
+        puts "cg_bonds: could not source $env(VIEW_CG_BONDS): $_e"
+    } elseif {$env(VIEW_BONDS_KIND) eq "tpr"} {
+        set _gmx $env(VIEW_GMX)
+        if {$_gmx eq ""} { set _gmx "gmx" }
+        puts "cg_bonds: adding Martini bonds from [file tail $env(VIEW_BONDS_ABS)] (gmx dump)..."
+        if {[catch {cg_bonds -gmx $_gmx -tpr $env(VIEW_BONDS_ABS)} _e]} {
+            puts "cg_bonds (-tpr) failed: $_e"
+        }
+    } else {
+        puts "cg_bonds: adding Martini bonds from [file tail $env(VIEW_BONDS_ABS)] (.top)..."
+        if {[catch {cg_bonds -top $env(VIEW_BONDS_ABS)} _e]} {
+            puts "cg_bonds (-top) failed: $_e"
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Selections and representations. Each lipid type that is present gets its own representation, so it

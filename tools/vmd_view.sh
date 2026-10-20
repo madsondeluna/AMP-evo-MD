@@ -2,7 +2,7 @@
 #
 # Open a coarse-grained membrane in VMD with Martini-friendly representations, optionally with a
 # peptide and a trajectory. Lipids are drawn as beads coloured by type, the peptide is
-# highlighted, water is hidden, ions are small, and the periodic box is drawn, all in a chalky
+# highlighted, water as a transparent surface, ions small, and the periodic box drawn, all in a chalky
 # matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
 # pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
 # with this repository's file names.
@@ -75,32 +75,38 @@ set pept   "not ($lipids or $water or $ions)"
 mol delrep 0 top
 
 # lipids: beads coloured by residue name, so POPE and POPG are distinguishable
-mol representation VDW 1.0 12.0
+mol representation VDW 1.0 20.0
 mol color ResName
 mol selection "$lipids"
 mol material AOChalky
 mol addrep top
 
 # peptide: highlighted in yellow, slightly larger, so it stands out against the bilayer
-mol representation VDW 1.1 16.0
+mol representation VDW 1.1 20.0
 mol color ColorID 4
 mol selection "$pept"
 mol material AOChalky
 mol addrep top
 
 # ions: small beads coloured by name
-mol representation VDW 0.6 12.0
+mol representation VDW 0.6 16.0
 mol color Name
 mol selection "$ions"
 mol material AOChalky
 mol addrep top
 
-# water: hidden by default. To show it as faint points, uncomment the four lines below.
-# mol representation Points 1.0
-# mol color ColorID 0
-# mol selection "$water"
-# mol material Transparent
-# mol addrep top
+# water: a transparent surface, the Martini-tutorial look. QuickSurf wraps the water beads in a
+# smooth isosurface so the solvent reads as a faint slab around the bilayer rather than thousands
+# of beads; a transparent material and a light blue (iceblue) keep it from hiding the membrane.
+# For a glassier finish swap Transparent for Glass3 or Glass1; for a smoother or coarser surface
+# change the QuickSurf grid spacing, the third number. Set VIEW_HIDE_WATER=1 to drop it entirely.
+if {![info exists env(VIEW_HIDE_WATER)] || $env(VIEW_HIDE_WATER) eq ""} {
+    mol representation QuickSurf 1.0 0.5 1.0 1.0
+    mol color ColorID 15
+    mol selection "$water"
+    mol material Transparent
+    mol addrep top
+}
 
 # ---------------------------------------------------------------------------
 # Display and periodic box.
@@ -120,6 +126,8 @@ display shadows on
 display ambientocclusion on
 display aoambient 0.9
 display aodirect 0.3
+display antialias on
+display rendermode GLSL
 
 # pbctools ships with VMD. Wrap molecules into the box so the bilayer is continuous, then draw
 # the box. Both are wrapped in catch so a VMD build without pbctools still opens the system.

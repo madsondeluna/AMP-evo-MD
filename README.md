@@ -1150,9 +1150,10 @@ finishes this week, and a mean hides exactly that.
 ### Visualising in VMD
 
 `tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, with Martini-friendly
-representations: lipids as beads coloured by type, the peptide highlighted, water hidden, ions
-small, and the periodic box drawn, in a chalky matte style (VMD's AOChalky material with ambient
-occlusion). It takes a structure and an optional trajectory.
+representations: lipids as beads coloured by type, the peptide highlighted, water as a transparent
+QuickSurf surface (the Martini-tutorial look), ions small, and the periodic box drawn, in a chalky
+matte style (VMD's AOChalky material with ambient occlusion, orthographic). It takes a structure
+and an optional trajectory. Set `VIEW_HIDE_WATER=1` to drop the water surface.
 
 ```bash
 tools/vmd_view.sh prep/bacterial/equil.gro                             # the equilibrated membrane

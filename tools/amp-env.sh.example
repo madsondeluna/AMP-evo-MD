@@ -22,7 +22,7 @@
 # Edit these three lines for your machine
 # ---------------------------------------------------------------------------
 AMP_ROOT="$HOME/AMP-evo-MD"
-AMP_GROMACS_MODULE="gromacs/2024.3"     # exact name from 'module avail', never a bare 'gromacs'
+AMP_GROMACS_MODULE="gromacs/2025.3"     # exact name from 'module avail', never a bare 'gromacs'
 AMP_GMX_BINARY="gmx"                    # 'gmx_mpi' for most source builds with MPI
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ if ! command -v "$GMX" >/dev/null 2>&1; then
 fi
 
 # Pin the build. Taken from the binary itself rather than from the module name, so the two
-# cannot drift apart: a module named 2024.3 that provides something else would otherwise pass.
+# cannot drift apart: a module named 2025.3 that provides something else would otherwise pass.
 AMP_GMX_VERSION="$("$GMX" --version 2>/dev/null | sed -n 's/^GROMACS version:[[:space:]]*//p' | head -1)"
 if [ -z "$AMP_GMX_VERSION" ]; then
     # An empty value would be exported as an empty GMX_VERSION_EXPECT, which provenance.py

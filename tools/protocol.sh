@@ -160,6 +160,28 @@ say "2/7  build"
 # ---------------------------------------------------------------------------
 eval "${BUILD_CMD}"
 
+# insane writes a topology for the lipid set its own templates use, which is Martini 2: a
+# generic '#include "martini.itp"' that does not exist here, and ions named NA+ and CL-. This
+# pipeline is Martini 3, where the force field is split across named itp files and the ions are
+# NA and CL. Rewrite both so grompp can read the system, right after the build, so every grompp
+# that follows sees a corrected topology. Assumes ff = martini3001 (the configured force field);
+# a martini22 run would need the Martini 2 include set instead.
+FF_DIR="${HERE}/user/base/insert_peptide"
+for itp in martini_v3.0.0.itp martini_v3.0.0_phospholipids_v1.itp \
+           martini_v3.0.0_solvents_v2.itp martini_v3.0.0_ions_v1.itp; do
+    if [ ! -f "${FF_DIR}/${itp}" ]; then
+        echo "Missing force field file: ${FF_DIR}/${itp}" >&2
+        exit 1
+    fi
+    cp "${FF_DIR}/${itp}" .
+done
+# The placeholder include becomes the Martini 3 set: the core field, the phospholipids (POPE,
+# POPG and the rest), the solvents (W), and the ions (NA, CL).
+sed -i 's|#include "martini.itp"|#include "martini_v3.0.0.itp"\n#include "martini_v3.0.0_phospholipids_v1.itp"\n#include "martini_v3.0.0_solvents_v2.itp"\n#include "martini_v3.0.0_ions_v1.itp"|' "${NAME}.top"
+# NA+ -> NA and CL- -> CL in both the topology and the structure. The replacements are the same
+# width as what they replace, so the fixed-column .gro stays aligned.
+sed -i -e 's/NA+/NA /g' -e 's/CL-/CL /g' "${NAME}.top" "${NAME}_raw.gro"
+
 # ---------------------------------------------------------------------------
 say "3/7  minimise"
 # ---------------------------------------------------------------------------

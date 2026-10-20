@@ -204,7 +204,7 @@ module avail 2>&1 | grep -i -E "openmpi|mpich|mpi|python"
 Load GROMACS **with an explicit version**, and note whether it brings MPI with it:
 
 ```bash
-module load gromacs/2024.3     # the exact name and version 'module avail' printed
+module load gromacs/2025.3     # the exact name and version 'module avail' printed
 which gmx gmx_mpi
 gmx --version | head -20       # or gmx_mpi --version
 ```
@@ -241,8 +241,8 @@ It prints what it set, so you can see at a glance which environment a terminal i
 ```
 amp-env loaded
   root              /home/madson/AMP-evo-MD
-  gmx               /opt/gromacs/2024.3/bin/gmx
-  gmx version       2024.3  (pinned as 2024.3)
+  gmx               /opt/gromacs/2025.3/bin/gmx
+  gmx version       2025.3  (pinned as 2025.3)
   python            /home/madson/AMP-evo-MD/.venv/bin/python3
   MPI ranks         15
   threads per rank  2
@@ -268,7 +268,7 @@ Then `ampenv` loads it and the rest of the machine stays untouched.
 `GMX_VERSION_EXPECT` pins the build. `run.py` checks the running GROMACS against it at the start
 of both the campaign and the calibration run, and stops with a clear message on a mismatch, rather than producing numbers that silently do not
 belong with the rest of the campaign. Matching is a prefix test, so `2024` accepts any 2024.x
-and `2024.3` does not accept `2024.4`. Leave it unset and the version is recorded but not
+and `2025.3` does not accept `2025.4`. Leave it unset and the version is recorded but not
 enforced.
 
 **If `python3 -m venv` is unavailable.** Some minimal installs ship Python without `venv`. Check

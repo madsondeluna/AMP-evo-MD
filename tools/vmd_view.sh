@@ -156,8 +156,8 @@ set pept   "not ($lipids or $water or $ions)"
 # ions split by sign so Na and Cl carry their own colour (names with + / - are double-quoted)
 set ion_cations {resname NA "NA+" SOD ION}
 set ion_anions  {resname CL "CL-" CLA}
-set ion_cation_color 5    ;# Na: tan
-set ion_anion_color  9    ;# Cl: pink
+set ion_cation_color 30   ;# Na: red3
+set ion_anion_color  31   ;# Cl: orange2
 
 mol delrep 0 top
 

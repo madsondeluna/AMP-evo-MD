@@ -86,6 +86,27 @@ def _load_observables(path):
         return None
 
 
+def _read_sequence(candidate_dir, fallback):
+    """
+    The candidate's sequence, read from the input.seq the run writes into each directory.
+
+    The directory name is the sequence only for GA candidates; the calibration path names
+    directories SEQUENCE<rank>_<count>. input.seq (">Test" then the sequence) is the reliable
+    source, so the join to the progress file is correct regardless of the directory name. Falls
+    back to the directory name when the file is absent.
+    """
+    path = os.path.join(candidate_dir, "input.seq")
+    try:
+        with open(path) as handle:
+            for line in handle:
+                line = line.strip()
+                if line and not line.startswith(">"):
+                    return line.upper()
+    except OSError:
+        pass
+    return fallback
+
+
 def _progress_metadata(progress_path):
     """
     Map each sequence to its GA metadata: first generation seen, last fitness, raw, orientation,
@@ -156,6 +177,57 @@ def _ga_timeline(iterations):
     return rows
 
 
+# Loose key matching for the gmx energy columns, mirroring tools/membrane_analysis.py so a
+# different gmx version that labels the columns slightly differently still resolves.
+_SURFTEN_KEYS = ("#Surf*SurfTen", "Surf*SurfTen", "SurfTen")
+_BOXX_KEYS = ("Box-X", "Box-X ")
+_BOXY_KEYS = ("Box-Y",)
+
+
+def _match_series(series, keys):
+    for want in keys:
+        for label, values in series.items():
+            if label.strip().startswith(want):
+                return values
+    return None
+
+
+def _equilibration_series(prep_dir, role_map, outdir):
+    """
+    Save the membrane equilibration time series (surface tension and area) per role.
+
+    Reads the gmx-energy xvg that the membrane build already writes at
+    prep/<membrane>/<membrane>_energy.xvg (Box-X, Box-Y, #Surf*SurfTen), the same file
+    tools/membrane_analysis.py consumes, computes area = Box-X * Box-Y, and writes one
+    equil_<role>.csv per membrane into the analysis directory. No GROMACS call is made here:
+    if the xvg is absent (the build has not produced it), the role is skipped and reported.
+    """
+    written = {}
+    if not prep_dir or not os.path.isdir(prep_dir):
+        return written
+    for mname, role in role_map.items():
+        xvg = os.path.join(prep_dir, mname, "%s_energy.xvg" % mname)
+        if not os.path.isfile(xvg):
+            continue
+        try:
+            time, series, _ = mdtools.read_xvg(xvg)
+        except (OSError, ValueError):
+            continue
+        surften = _match_series(series, _SURFTEN_KEYS)
+        box_x = _match_series(series, _BOXX_KEYS)
+        box_y = _match_series(series, _BOXY_KEYS)
+        if surften is None:
+            continue
+        cols = {"time_ns": time / 1000.0, "surften": surften}  # xvg time is in ps
+        if box_x is not None and box_y is not None:
+            cols["area"] = box_x * box_y
+        rows = [{k: cols[k][i] for k in cols} for i in range(len(time))]
+        name = "equil_%s.csv" % role
+        _write_csv(os.path.join(outdir, name), rows, list(cols))
+        written[role] = name
+    return written
+
+
 def _positional_frequency(iterations):
     """Residue-group frequency at each position, for the final iteration's population."""
     if not iterations:
@@ -171,13 +243,16 @@ def _positional_frequency(iterations):
 
 
 # --- the collector -----------------------------------------------------------------------------
-def collect(campaign_dir, progress_path=None, outdir=None):
+def collect(campaign_dir, progress_path=None, outdir=None, prep_dir=None):
     """Build the dataset and write it; return the metadata dict describing what was written."""
     campaign_dir = os.path.abspath(campaign_dir)
     if progress_path is None:
         progress_path = os.path.join(campaign_dir, "output.txt")
     if outdir is None:
         outdir = os.path.join(campaign_dir, "analysis")
+    if prep_dir is None:
+        # The membrane build writes under prep/ at the repo root, a sibling of the output dir.
+        prep_dir = os.path.join(os.path.dirname(campaign_dir), "prep")
     os.makedirs(outdir, exist_ok=True)
 
     per_seq, settings, iterations = _progress_metadata(progress_path)
@@ -206,7 +281,9 @@ def collect(campaign_dir, progress_path=None, outdir=None):
         if provenance is None and isinstance(obs.get("_provenance"), dict):
             provenance = obs["_provenance"]
 
-        sequence = cid  # candidate directory is the uppercased sequence
+        # The directory name is the sequence for GA candidates, but read input.seq to be correct
+        # for the calibration naming too. id stays the directory name (unique on disk).
+        sequence = _read_sequence(cdir, cid)
         meta = per_seq.get(sequence, {})
 
         # Sequence descriptors, all from the sequence alone (no simulation needed).
@@ -351,6 +428,14 @@ def collect(campaign_dir, progress_path=None, outdir=None):
         metadata["files"]["positional.csv"] = "residue-group frequency by position, final generation"
     metadata["n_generations"] = len(timeline)
 
+    # --- membrane equilibration series (from the build's gmx-energy xvg, if present) ----------
+    equil = _equilibration_series(prep_dir, role_of, outdir)
+    if equil:
+        metadata["equilibration"] = equil  # {role: filename}
+        for role, fname in equil.items():
+            metadata["files"][fname] = "membrane equilibration series (time, surften, area) for role %s" % role
+    metadata["prep_dir"] = prep_dir if os.path.isdir(prep_dir) else None
+
     meta_path = os.path.join(outdir, "metadata.json")
     with open(meta_path, "w") as handle:
         json.dump(metadata, handle, indent=2, sort_keys=True)
@@ -410,8 +495,10 @@ def main(argv=None):
     parser.add_argument("campaign_dir", help="GROMACS run output directory (core.settings.output_dir)")
     parser.add_argument("--progress", default=None, help="progress file (default <campaign>/output.txt)")
     parser.add_argument("--outdir", default=None, help="output directory (default <campaign>/analysis)")
+    parser.add_argument("--prep", default=None,
+                        help="membrane build directory for equilibration series (default sibling prep/)")
     args = parser.parse_args(argv)
-    collect(args.campaign_dir, progress_path=args.progress, outdir=args.outdir)
+    collect(args.campaign_dir, progress_path=args.progress, outdir=args.outdir, prep_dir=args.prep)
 
 
 if __name__ == "__main__":

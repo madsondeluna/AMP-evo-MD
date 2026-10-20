@@ -538,28 +538,56 @@ def _reference_values(ctx):
     return out
 
 
+def _equil_series(ctx):
+    """
+    The saved equilibration series per role, as {role: {column: array}}.
+
+    amp_dataset writes equil_<role>.csv (time_ns, surften, area) from the membrane build. Roles
+    are read from metadata when present, otherwise by filename convention.
+    """
+    out = {}
+    roles = ctx.meta.get("equilibration") or {role: "equil_%s.csv" % role
+                                              for role in ("target", "host")}
+    for role, fname in roles.items():
+        data = ctx._load_optional(fname)
+        if data and "time_ns" in data:
+            out[role] = data
+    return out
+
+
+_ROLE_COLOR = {"target": A.TARGET, "host": A.HOST}
+_ROLE_LABEL = {"target": "bacterial", "host": "host"}
+
+
 @figure("membrane", "E1", "Equilibration: surface tension")
 def e1_equil_gamma(ctx):
-    path = ctx.meta.get("equil_surften_xvg")
-    if not path or not os.path.isfile(path):
-        return None  # membrane-build artifact, supplied via metadata; skipped when absent
-    x, series, _ = mdtools.read_xvg(path)
+    series = _equil_series(ctx)
+    series = {r: d for r, d in series.items() if "surften" in d}
+    if not series:
+        return None  # needs the build's equilibration series; skipped when absent
     fig, ax = ctx.new(A.WIDTH_SINGLE, 3.0)
     ax.axhline(0, color=A.GREY, lw=0.6)
-    ax.plot(x, next(iter(series.values())), color=A.HOST, lw=0.8)
-    A.finish(ax, "Equilibration: surface tension", "time (ns)",
-             r"#Surf*SurfTen (bar nm)", "a")
+    for role, d in series.items():
+        ax.plot(d["time_ns"], d["surften"], color=_ROLE_COLOR.get(role, A.HOST), lw=0.8,
+                label=_ROLE_LABEL.get(role, role))
+    if len(series) > 1:
+        ax.legend(loc="upper right")
+    A.finish(ax, "Equilibration: surface tension", "time (ns)", r"#Surf*SurfTen (bar nm)", "a")
     return A.save(fig, ctx.out("E1_equil_surften.png"))
 
 
 @figure("membrane", "E2", "Equilibration: area")
 def e2_equil_area(ctx):
-    path = ctx.meta.get("equil_area_xvg")
-    if not path or not os.path.isfile(path):
+    series = _equil_series(ctx)
+    series = {r: d for r, d in series.items() if "area" in d}
+    if not series:
         return None
-    x, series, _ = mdtools.read_xvg(path)
     fig, ax = ctx.new(A.WIDTH_SINGLE, 3.0)
-    ax.plot(x, next(iter(series.values())), color=A.HOST, lw=0.8)
+    for role, d in series.items():
+        ax.plot(d["time_ns"], d["area"], color=_ROLE_COLOR.get(role, A.HOST), lw=0.8,
+                label=_ROLE_LABEL.get(role, role))
+    if len(series) > 1:
+        ax.legend(loc="upper right")
     A.finish(ax, "Equilibration: box area", "time (ns)", r"area (nm$^2$)", "b")
     return A.save(fig, ctx.out("E2_equil_area.png"))
 

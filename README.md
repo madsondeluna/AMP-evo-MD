@@ -161,6 +161,16 @@ Size, as built:
 | beads, total | about 5300 |
 | force field | Martini 3, non-polarisable water |
 
+![Membrane lipids and topology](docs/membranes.png)
+
+The three lipids in all-atom and Martini 3 coarse-grained form, and the two membranes' composition
+and charge balance. They share tails, glycerol and phosphate; only the head bead differs, and that
+is what sets the charge. POPG is anionic because its glycerol head (GL0) carries no cation to
+cancel the phosphate, so each POPG is -1; POPE (NH3, +1) and POPC (NC3, +1) are zwitterionic and
+net neutral. The anionic bacterial surface against the neutral host is the selectivity contrast a
+cationic antimicrobial peptide discriminates on. Regenerate the figure with
+`python docs/make_membranes_figure.py` (needs `matplotlib`).
+
 The equilibrated structure is produced once at zero tension and reused for every candidate (see
 [The equilibrated membrane is a committed standard](#the-equilibrated-membrane-is-a-committed-standard)),
 so the per-candidate cost is only the peptide insertion and the production run.

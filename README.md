@@ -225,6 +225,100 @@ reasons for keeping Martini 3 non-polarisable water, rather than importing their
 charge-related conclusions as a prior, are in [Relation to Evo-MD-FE](#relation-to-evo-md-fe)
 above.
 
+## The peptide model: imposed helix and search space
+
+### Secondary structure is imposed, not predicted
+
+Every candidate is modelled as an ideal alpha-helix. For each sequence the pipeline writes an
+all-`H` secondary-structure string (`"H" * len(sequence)`), builds the atomistic helix with
+PeptideBuilder, and coarse-grains it with `martinize2 -ss`. In Martini 3 the secondary structure is
+supplied as an input: it sets the backbone bonded terms (bonds, angles, dihedrals) that hold the
+helix. Unlike Martini 2, the backbone bead type in Martini 3 no longer depends on the secondary
+structure; only the bonded terms do. The force field cannot fold, so the helix is an assumption, not
+a result. No elastic network or Go/OLIVES bias is applied: for a single helix the SS-dependent
+bonded terms maintain helicity on their own, and there is no tertiary structure to hold.
+
+This is the central structural assumption of the whole approach, and it is a stronger one for AMPs
+than it was for the curvature sensors this method came from: many AMPs are disordered in solution
+and fold only on contact with the membrane, so imposing a rigid helix assumes the bound, folded
+state throughout. It is the first limitation to state and the first thing to revisit if the
+calibration set misranks (the STATE=1 gate exists for exactly this).
+
+### How the works we build on handle it
+
+Imposing secondary structure is standard in Martini, because the model is built that way, not as a
+shortcut:
+
+- **Evo-MD, the base method (van Hilten et al. 2023).** Assumes and fixes an alpha-helix when
+  generating starting conformations, justified because membrane-surface peptides are mostly
+  alpha-helical and the Martini force field cannot model protein folding. Same build path
+  (PeptideBuilder then martinize2/VerMoUTH). We follow it directly.
+- **Martini protein models (Monticelli et al. 2008; Martini 3, Souza et al. 2021).** Secondary
+  structure is a required input encoded through bonded terms, never predicted. Holding a tertiary
+  structure needs an added bias (elastic network, GoMartini, or OLIVES); a single helix does not,
+  which is why we add none.
+- **AMPs in Martini.** Studies that simulate specific AMPs with membranes also impose the helix.
+  Gkeka and Sarkisov (2010), simulating amphipathic helical peptides including magainin-H2, state the
+  model "assumes a known secondary structure that does not change" and even remove Martini's imposed
+  SS constraint on two terminal residues, confirming the helix is model-imposed rather than emergent;
+  Santo and Berkowitz (2012) likewise simulate magainin-2 and melittin as Martini helices.
+
+The difference in kind: those AMP studies simulate one peptide whose experimental helix is known, so
+imposing it is well grounded. We design de novo across a sequence search, with no experimental
+structure per candidate, so, like Evo-MD, we impose a generic helix and treat "would this sequence
+actually be helical" as outside the model.
+
+### The search space is restricted
+
+Like the base method, the GA does not sample all 20 residues. The active alphabet is 11 residues; the
+rest carry weight 0 in the sampling table and never appear. Length is fixed, and there are explicit
+charge and solubility windows, all enforced as search-space constraints before any simulation runs.
+
+| Setting | Value | Reason |
+|---|---|---|
+| Alphabet (11) | A, E, F, K, L, M, Q, R, S, W, Y | helix-prone set, cationic-capable |
+| Excluded: G, P | glycine, proline | helix breakers, incompatible with the imposed helix (martinize2 also cannot assign a terminal proline) |
+| Excluded: D, C, T, N, H, V | low alpha-helical propensity | inherited from the base method's helix-prone alphabet |
+| Excluded: I | isoleucine | in Martini 3, Ile and Leu share identical bead types (backbone P2, side chain SC2), so they are indistinguishable in every interaction the pipeline measures; searching both is redundant. Val is distinct (SP2/SC3) and is excluded only on helix propensity |
+| Length | fixed 24 residues | n/a |
+| Net charge | (K+R) - (D+E) in [+3, +9] | cationic AMP character; our addition, the base method imposed no charge constraint |
+| Hydrophobic fraction | at most 0.65 | solubility guard against the aggregation failure the curvature paper documented (its optima were so hydrophobic they would precipitate) |
+
+One deliberate departure from the base method: **arginine is re-enabled.** Excluding Arg is
+defensible for curvature sensors but not for AMPs, where it carries much of the cationic character
+and interacts with anionic headgroups differently from lysine. The net-charge window and the
+hydrophobicity cap are also ours, not the base method's, and encode AMP-specific biology and
+solubility.
+
+### What this excludes relative to natural AMPs
+
+The restriction is honest about what it gives up. Several excluded residues are not rare in natural
+AMPs; they are among the most characteristic, and the exclusions follow from the imposed helix and a
+force-field degeneracy, not from any evidence that these residues are bad for antimicrobial activity:
+
+- **Cysteine and glycine** are enriched in antimicrobial peptides relative to typical proteins (APD3,
+  DBAASP, DRAMP). Excluding Cys removes the entire disulfide-stabilised class (defensins, protegrins,
+  theta-defensins), which is beta-sheet or cyclic rather than helical. Excluding Gly removes
+  glycine-rich AMPs and the glycine hinges common in membrane-active peptides.
+- **Proline** defines the proline-rich AMPs (apidaecin, drosocin, Bac7), which act on intracellular
+  targets, and the proline hinges found in many linear helical AMPs.
+- **Histidine** drives pH-sensitive AMPs (histatins, clavanins).
+
+The design is therefore confined to the cationic, amphipathic, alpha-helical sub-universe (magainin,
+LL-37, cecropin-like), which is the intended target, but it cannot reach whole, abundant classes of
+natural AMPs. This is a property of the method, stated so that results are read as "the best cationic
+amphipathic helix the model can find", not "the best antimicrobial peptide".
+
+### Sources
+
+- [van Hilten et al. 2023, Science Advances (Evo-MD)](https://pmc.ncbi.nlm.nih.gov/articles/PMC10022891/)
+- [Monticelli et al. 2008, JCTC, Martini protein model](https://cgmartini.nl/docs/publications/entries/2008/Monticelli2008_Proteins.html)
+- [Souza et al. 2021, Nature Methods, Martini 3](https://doi.org/10.1038/s41592-021-01098-3)
+- [Martini 3 structure-bias comparison, bioRxiv 2025](https://www.biorxiv.org/content/10.1101/2025.03.17.643608)
+- [Pedersen et al. 2024, JCTC, OLIVES](https://doi.org/10.1021/acs.jctc.4c00553)
+- [Gkeka and Sarkisov 2010, J. Phys. Chem. B](https://doi.org/10.1021/jp908320b)
+- [Santo and Berkowitz 2012, J. Phys. Chem. B](https://doi.org/10.1021/jp212018f)
+
 ## Order of work
 
 The calibration run comes first, and it uses no genetic algorithm.
@@ -1433,7 +1527,17 @@ observable may simply not discriminate, which is what the calibration set exists
 (`run.py` writes an all-helix assignment). This was a mild assumption for curvature sensors,
 which are helical by construction, and is a strong one for AMPs, many of which are disordered
 in solution and fold only on binding. It is the first thing to revisit if the calibration set
-is misranked.
+is misranked. How this compares to the source paper and to other Martini AMP studies, and how the
+helix is held in the model, is in
+[The peptide model](#the-peptide-model-imposed-helix-and-search-space).
+
+**Restricted alphabet.** The GA samples 11 of the 20 residues and fixes the length, the net charge
+and the hydrophobic fraction. The exclusions follow from the imposed helix (Gly, Pro and other
+low-propensity residues) and from a Martini 3 bead-type degeneracy (Ile is identical to Leu), not
+from any evidence against those residues in AMPs; several, notably Cys, Gly and Pro, are in fact
+characteristic of large natural-AMP classes the search cannot reach (disulfide, glycine-rich and
+proline-rich). The full list and reasoning are in
+[The peptide model](#the-peptide-model-imposed-helix-and-search-space).
 
 **Peptide density.** One peptide in a roughly 200-lipid patch is about P:L 1:200. AMPs act
 cooperatively at ratios an order of magnitude higher. `delta_gamma` here is dilute-limit,

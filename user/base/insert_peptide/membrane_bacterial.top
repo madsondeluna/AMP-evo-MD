@@ -1,0 +1,19 @@
+#include "martini_v3.0.0.itp"
+#include "martini_v3.0.0_phospholipids_v1.itp"
+#include "martini_v3.0.0_solvents_v2.itp"
+#include "martini_v3.0.0_ions_v1.itp"
+
+[ system ]
+; name
+INSANE! Membrane UpperLeaflet>POPE:POPG=73.0:31.0 LowerLeaflet>POPE:POPG=73.0:31.0
+
+
+[ molecules ]
+; name  number
+POPE            70
+POPG            29
+POPE            70
+POPG            29
+W             2847
+NA              60
+CL               2

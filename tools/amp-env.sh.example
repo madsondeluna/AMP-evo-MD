@@ -58,6 +58,13 @@ export GMX="$AMP_GMX_BINARY"
 export MARTINIZE2="${MARTINIZE2:-martinize2}"
 export PATH="$HOME/bin:$PATH"           # insane lives here
 
+# Force CPU-only while the GPU is unusable. Loading the GROMACS module also loads CUDA, so GROMACS
+# detects the GPU and, without -ntmpi, aborts mdrun; and on this workstation the GPU driver has an
+# NVML version mismatch, so it could not be trusted to compute even if it ran. This makes every
+# gmx run on this machine CPU-only, which is the known-good path. Remove this line once the GPU is
+# fixed (nvidia-smi runs clean), and specify -ntmpi for GPU runs.
+export GMX_DISABLE_GPU_DETECTION=1
+
 if ! command -v "$GMX" >/dev/null 2>&1; then
     echo "amp-env: '$GMX' not on PATH after loading the module." >&2
     echo "amp-env: try 'which gmx gmx_mpi' and set AMP_GMX_BINARY accordingly." >&2

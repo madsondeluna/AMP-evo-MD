@@ -729,31 +729,33 @@ AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
 This builds, minimises, and equilibrates at zero tension under a semi-isotropic barostat, then
-measures the equilibrium area per lipid and prints a second plan with corrected lipid counts.
-Rebuild with those counts, re-equilibrate, and then run the production reference:
+measures the equilibrium area per lipid and prints a second plan with corrected lipid counts. The
+zero-tension equilibration lets the box relax to the composition's own equilibrium area, so what
+it leaves in `equil.gro` is already a tensionless membrane at that area. That is the reference
+membrane the candidates insert into, so the production reference runs on it directly:
 
 ```bash
 PASS=2 AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
-Repeat the whole sequence for the host membrane:
+Repeat for the host membrane:
 
 ```bash
-./tools/protocol.sh host "POPC:100" host
+tools/build_reference_membranes.sh host                   # equilibrate (pass 1)
+PASS=2 AUTO=1 ./tools/protocol.sh host "POPC:100" host     # production reference
 ```
 
-Why two passes. The production runs use a constant-area ensemble, so the box must sit at the
-composition's own equilibrium area. The equilibrium area per lipid is only known after
-equilibrating, so the lipid count is corrected on a second pass while the box stays fixed at
-8.0 x 8.0 nm. The lipid count is the free parameter, not the box, because the two membranes also
-need comparable areas: `delta_gamma` is a per-unit-area quantity, and a large area mismatch
-would dilute the per-peptide perturbation differently in each membrane.
-
-Both reference compositions here, POPE:POPG and pure POPC, pack close to their seed
-area-per-lipid, so the second pass is a modest correction. A composition with cholesterol would
-need it more, because sterols condense their neighbours and a linear sum over the seed values
-underestimates the real packing; worth remembering when cholesterol or cardiolipin are added
-later.
+Why not rebuild. The production ensemble is constant-area, so the box has to sit at the
+composition's equilibrium area, otherwise the membrane is pre-stressed and its free surface
+tension is not zero. The zero-tension equilibration already put the box there, so the equilibrated
+membrane satisfies that condition with no rebuild. And `delta_gamma` is a difference measured at
+one fixed box, `gamma(free) - gamma(with peptide)`, so any small residual baseline tension cancels
+between the reference and the candidates, which use the same membrane. The only thing a rebuild to
+a common 8.0 x 8.0 nm box buys is area-matching two membranes, which matters when their natural
+areas differ a lot. Here they do not: POPE:POPG equilibrates near 0.63 nm2 per lipid and POPC near
+0.64, so each membrane is used at its own equilibrium area. The 8.0 nm rebuild is kept as an option
+(rebuild from `plan_pass2.txt`, re-equilibrate, then `PASS=2`) for a later composition where the
+areas diverge, such as one with cholesterol, which condenses its neighbours.
 
 Useful overrides:
 

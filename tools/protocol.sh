@@ -123,8 +123,11 @@ python3 "${HERE}/tools/membrane.py" plan \
 
 echo
 if [ "${PASS:-1}" = "2" ]; then
-    echo "(PASS=2: the plan above is informational. Production uses the system already in"
-    echo " ${DIR}/equil.gro, which you rebuilt from plan_pass2.txt.)"
+    echo "(PASS=2: the plan above is informational. Production runs on the equilibrated membrane"
+    echo " already in ${DIR}/equil.gro, which the zero-tension equilibration put at its own"
+    echo " equilibrium area. This is the default path. The optional 8.0 nm area-matching rebuild"
+    echo " from plan_pass2.txt is only for comparing two very differently sized membranes; see"
+    echo " the README.)"
     echo
 fi
 echo "The plan above contains the insane command for this composition. Run it, or let this"
@@ -139,16 +142,20 @@ if [ "${AUTO:-0}" != "1" ]; then
 fi
 
 if [ "${PASS:-1}" = "2" ]; then
-    # Pass 2 resumes from a system the user rebuilt and re-equilibrated by hand, so rebuilding
-    # here would overwrite it with the pass-1 lipid counts and feed those into production. That
-    # is the one outcome this whole two-pass procedure exists to avoid.
+    # PASS=2 runs the production reference on the equilibrated membrane in equil.gro, skipping
+    # build and equilibration. By default that is the one pass 1 produced: the zero-tension
+    # equilibration already relaxed the box to the composition's equilibrium area, so the membrane
+    # is tensionless there and needs no rebuild. delta_gamma is a difference measured at one fixed
+    # box, so any small residual baseline tension cancels between the reference and the candidates,
+    # which use this same membrane. (equil.gro can also be a system rebuilt from plan_pass2.txt to
+    # force a common 8.0 nm box; that only matters when two membranes have very different natural
+    # areas, e.g. once cholesterol is added. See the README.)
     if [ ! -f equil.gro ]; then
         echo "PASS=2 expects an equilibrated system in ${DIR}/equil.gro." >&2
-        echo "Rebuild with the lipid counts from plan_pass2.txt, re-run the minimisation and" >&2
-        echo "the zero-tension equilibration, then run PASS=2 again." >&2
+        echo "Run pass 1 first (it leaves equil.gro here), then run PASS=2." >&2
         exit 1
     fi
-    echo "PASS=2: resuming from the existing equil.gro, skipping build and equilibration."
+    echo "PASS=2: production on the equilibrated membrane in equil.gro, skipping build and equilibration."
     say "6/7  production at constant area (the peptide-free reference run)"
 else
 

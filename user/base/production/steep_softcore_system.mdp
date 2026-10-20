@@ -167,7 +167,9 @@ QMMM-grps                =
 ; QM method             
 QMmethod                 = 
 ; QMMM scheme           
-QMMMscheme               = normal
+; QMMMscheme removed: unknown key in GROMACS 2024+, raised a warning that tripped grompp's
+; -maxwarn limit. This is a classical coarse-grained run; QMMM defaults to off, so nothing is lost.
+; QMMMscheme               = normal
 ; QM basisset           
 QMbasis                  = 
 ; QM charge             
@@ -183,7 +185,8 @@ SAon                     =
 SAoff                    = 
 SAsteps                  = 
 ; Scale factor for MM charges
-MMChargeScaleFactor      = 1
+; MMChargeScaleFactor removed: unknown key in GROMACS 2024+, same reason as QMMMscheme above.
+; MMChargeScaleFactor      = 1
 
 ; SIMULATED ANNEALING  
 ; Type of annealing for each temperature group (no/single/periodic)

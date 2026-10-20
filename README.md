@@ -777,12 +777,19 @@ which pins the composition, box, salt and the equilibration length. **The standa
 is 500 ns** (the `protocol.sh` default of 200 ns is a floor for exploratory builds).
 
 ```bash
-tmux new -s equil
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
-tools/build_reference_membranes.sh 2>&1 | tee ~/equil500.log   # EQUIL_NS=500 is pinned in the recipe
-# detach with Ctrl-b then d; reattach with tmux attach -t equil
+
+# In tmux or screen if either is installed (reattachable). Otherwise nohup, which still survives a
+# dropped connection but cannot be reattached. EQUIL_NS=500 is pinned inside the recipe.
+nohup tools/build_reference_membranes.sh > ~/equil500.log 2>&1 &
+tail -f ~/equil500.log      # Ctrl-c stops watching, not the run
 ```
+
+The thread layout is chosen automatically: `protocol.sh` picks a total thread count divisible by
+`OMP_NUM_THREADS` and keeps the domain count modest, so a one-off membrane run does not need `NT`
+set by hand. Override with `NT=<n>` only for a specific layout, and keep it divisible by
+`OMP_NUM_THREADS`.
 
 At the measured rate this is about 1.1 h of wall time on 10 cores (see
 [Resource planning](#resource-planning)), plus the build and minimisation. When it finishes, the

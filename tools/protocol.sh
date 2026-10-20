@@ -31,7 +31,17 @@ try:
     n = len(os.sched_getaffinity(0))
 except Exception:
     n = os.cpu_count() or 1
-print(max(1, n - 1))
+# One mdrun for one small coarse-grained membrane. Two constraints shape the default. GROMACS
+# requires the total thread count to be divisible by OMP_NUM_THREADS, which amp-env sets for the
+# campaign layout (typically 2); a bare n-1 like 39 is not, and mdrun aborts. And a single bilayer
+# in an 8 nm box cannot be split across many domains without the decomposition hitting its minimum
+# cell size, so the rank count is kept modest. The default is therefore the largest multiple of
+# OMP_NUM_THREADS that keeps the ranks at or below a small cap. Override with NT=<n> for a specific
+# layout; an explicit NT still has to be divisible by OMP_NUM_THREADS.
+omp = max(1, int(os.environ.get('OMP_NUM_THREADS', '1') or '1'))
+max_ranks = 8
+ranks = max(1, min(max_ranks, (n - 1) // omp))
+print(ranks * omp)
 ")}"
 BOX="${BOX:-8.0}"              # lateral box in nm, both dimensions
 MAX_RESIDUES="${MAX_RESIDUES:-30}"

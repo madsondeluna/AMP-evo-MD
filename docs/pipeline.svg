@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1086" width="1040" height="1086" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1132" width="1040" height="1132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title>AMP-evo-MD pipeline</title>
-  <desc>Three phases: membrane preparation, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds two objectives, and every pipeline step is logged with its duration and outcome.</desc>
+  <desc>Three phases: membrane preparation, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds two objectives, and every pipeline step is logged with its duration and outcome. Boxes are coloured by process: membrane preparation, the shared per-candidate pipeline, the campaign, monitoring, inputs and produced data.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a8a85"/>
     </marker>
-    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0072B2"/>
+    <marker id="arrowSky" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E8BC0"/>
     </marker>
     <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#009E73"/>
@@ -15,9 +15,12 @@
     <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#D55E00"/>
     </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E69F00"/>
+    </marker>
   </defs>
 
-  <rect width="1040" height="1086" fill="#fcfcfb"/>
+  <rect width="1040" height="1132" fill="#fcfcfb"/>
 
 
   <!-- ===================== STEP 0 ===================== -->
@@ -32,29 +35,29 @@
   <text x="44" y="146.0" font-size="11" fill="#6b6b6b">Once per composition, and nothing else runs until it is done. The equilibrated membrane is committed and reused, so it reproduces on any machine.</text>
   <text x="982" y="128.0" font-size="11" fill="#8a8a85" text-anchor="end">tools/protocol.sh</text>
 
-  <!-- boxes -->
+  <!-- boxes: membrane preparation (blue) -->
   <g font-size="11">
-    <rect x="44" y="168.0" width="112" height="46" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="44" y="168.0" width="112" height="46" rx="4" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
     <text x="100" y="188.0" text-anchor="middle" fill="#1a1a1a">plan</text>
     <text x="100" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">lipid counts</text>
 
-    <rect x="188" y="168.0" width="112" height="46" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="188" y="168.0" width="112" height="46" rx="4" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
     <text x="244" y="188.0" text-anchor="middle" fill="#1a1a1a">build</text>
     <text x="244" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">insane</text>
 
-    <rect x="332" y="168.0" width="132" height="46" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="332" y="168.0" width="132" height="46" rx="4" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
     <text x="398" y="188.0" text-anchor="middle" fill="#1a1a1a">equilibrate</text>
     <text x="398" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">semi-isotropic, 500 ns</text>
 
-    <rect x="496" y="168.0" width="132" height="46" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="496" y="168.0" width="132" height="46" rx="4" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
     <text x="562" y="188.0" text-anchor="middle" fill="#1a1a1a">production</text>
     <text x="562" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">constant area</text>
 
-    <rect x="660" y="168.0" width="132" height="46" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="660" y="168.0" width="132" height="46" rx="4" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
     <text x="726" y="188.0" text-anchor="middle" fill="#1a1a1a">calibrate</text>
     <text x="726" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">4 constants</text>
 
-    <rect x="824" y="168.0" width="158" height="46" rx="4" fill="#eef7f3" stroke="#009E73" stroke-width="1"/>
+    <rect x="824" y="168.0" width="158" height="46" rx="4" fill="#e9f6f1" stroke="#009E73" stroke-width="1"/>
     <text x="903" y="188.0" text-anchor="middle" fill="#1a1a1a">MembraneDef</text>
     <text x="903" y="204.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">user/membranes.py</text>
   </g>
@@ -67,7 +70,7 @@
   </g>
   <path d="M 792 191.0 L 818 191.0" stroke="#009E73" stroke-width="1.2" fill="none" marker-end="url(#arrowGreen)"/>
 
-  <!-- second pass loop -->
+  <!-- second pass loop (optional) -->
   <path d="M 398 218.0 L 398 244.0 L 100 244.0 L 100 218.0" stroke="#D55E00" stroke-width="1.2" fill="none"
         stroke-dasharray="4 3" marker-end="url(#arrowOrange)"/>
   <text x="44" y="259.0" font-size="10" fill="#D55E00">optional: the zero-tension equilibration leaves the box at the equilibrium area, so production runs on it directly;</text>
@@ -80,29 +83,30 @@
   <text x="44" y="348.0" font-size="13" font-weight="600" fill="#1a1a1a">Per-candidate pipeline</text>
   <text x="44" y="366.0" font-size="11" fill="#6b6b6b">One sequence in, one observables file out. Used identically by calibration and by the campaign.</text>
 
+  <!-- boxes: per-candidate pipeline (sky blue), input (grey), data (green) -->
   <g font-size="11">
     <rect x="44" y="388.0" width="124" height="52" rx="4" fill="#f7f7f5" stroke="#c9c9c3" stroke-width="1"/>
     <text x="106" y="409.0" text-anchor="middle" fill="#1a1a1a">sequence</text>
     <text x="106" y="425.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">12 to 30 residues</text>
 
-    <rect x="200" y="388.0" width="146" height="52" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="200" y="388.0" width="146" height="52" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
     <text x="273" y="409.0" text-anchor="middle" fill="#1a1a1a">build peptide</text>
     <text x="273" y="425.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">PeptideBuilder, martinize2</text>
 
     <!-- two membranes -->
-    <rect x="378" y="374.0" width="168" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="378" y="374.0" width="168" height="40" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
     <text x="462" y="390.0" text-anchor="middle" fill="#1a1a1a">insert into bacterial</text>
     <text x="462" y="405.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">POPE / POPG (3:1)</text>
 
-    <rect x="378" y="424.0" width="168" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="378" y="424.0" width="168" height="40" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
     <text x="462" y="440.0" text-anchor="middle" fill="#1a1a1a">insert into host</text>
     <text x="462" y="455.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">POPC (neutral)</text>
 
-    <rect x="578" y="388.0" width="140" height="52" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="578" y="388.0" width="140" height="52" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
     <text x="648" y="409.0" text-anchor="middle" fill="#1a1a1a">production</text>
     <text x="648" y="425.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">400 ns each</text>
 
-    <rect x="750" y="382.0" width="232" height="64" rx="4" fill="#eef7f3" stroke="#009E73" stroke-width="1.4"/>
+    <rect x="750" y="382.0" width="232" height="64" rx="4" fill="#e9f6f1" stroke="#009E73" stroke-width="1.4"/>
     <text x="866" y="403.0" text-anchor="middle" fill="#1a1a1a" font-weight="600">observables.json</text>
     <text x="866" y="420.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">surface tension, interaction energy,</text>
     <text x="866" y="433.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">insertion depth, orientation factor</text>
@@ -117,14 +121,14 @@
   </g>
   <path d="M 718 414.0 L 744 414.0" stroke="#009E73" stroke-width="1.4" fill="none" marker-end="url(#arrowGreen)"/>
 
-  <!-- the two objectives -->
+  <!-- the two objectives (damage vermillion, binding reddish-purple) -->
   <g font-size="11">
-    <rect x="620" y="488.0" width="172" height="64" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1.4"/>
+    <rect x="620" y="488.0" width="172" height="64" rx="4" fill="#fcefe7" stroke="#D55E00" stroke-width="1.4"/>
     <text x="706" y="509.0" text-anchor="middle" fill="#1a1a1a" font-weight="600">damage</text>
     <text x="706" y="525.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">induced leaflet tension</text>
     <text x="706" y="539.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">on the target membrane</text>
 
-    <rect x="810" y="488.0" width="172" height="64" rx="4" fill="#f6f1fa" stroke="#8C5AA8" stroke-width="1.4"/>
+    <rect x="810" y="488.0" width="172" height="64" rx="4" fill="#f9eef4" stroke="#CC79A7" stroke-width="1.4"/>
     <text x="896" y="509.0" text-anchor="middle" fill="#1a1a1a" font-weight="600">binding</text>
     <text x="896" y="525.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">partitioning selectivity,</text>
     <text x="896" y="539.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">target against host</text>
@@ -172,31 +176,31 @@
   <text x="44" y="796.0" font-size="10.5" fill="#6b6b6b">membranes, or the imposed-helix assumption.</text>
   <text x="44" y="814.0" font-size="10.5" fill="#009E73">Yes: the class boundaries set the window. Continue.</text>
 
-  <!-- ===================== PHASE 3: CAMPAIGN ===================== -->
+  <!-- ===================== PHASE 3: CAMPAIGN (amber) ===================== -->
   <rect x="530" y="612.0" width="486" height="212" rx="6" fill="#ffffff" stroke="#e6e6e2" stroke-width="1"/>
   <text x="550" y="640.0" font-size="13" font-weight="600" fill="#1a1a1a">3. Campaign</text>
   <text x="550" y="658.0" font-size="11" fill="#6b6b6b">Genetic algorithm, random initial population.</text>
   <text x="996" y="640.0" font-size="11" fill="#8a8a85" text-anchor="end">run.py STATE = 0</text>
 
   <g font-size="10.5">
-    <rect x="550" y="676.0" width="128" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="550" y="676.0" width="128" height="40" rx="4" fill="#fdf4e3" stroke="#E69F00" stroke-width="1"/>
     <text x="614" y="693.0" text-anchor="middle" fill="#1a1a1a">population</text>
     <text x="614" y="707.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">144 sequences</text>
 
-    <rect x="712" y="676.0" width="128" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="712" y="676.0" width="128" height="40" rx="4" fill="#fdf4e3" stroke="#E69F00" stroke-width="1"/>
     <text x="776" y="693.0" text-anchor="middle" fill="#1a1a1a">evaluate</text>
     <text x="776" y="707.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">pipeline above</text>
 
-    <rect x="874" y="676.0" width="122" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="874" y="676.0" width="122" height="40" rx="4" fill="#fdf4e3" stroke="#E69F00" stroke-width="1"/>
     <text x="935" y="693.0" text-anchor="middle" fill="#1a1a1a">select</text>
     <text x="935" y="707.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">36 parents</text>
 
-    <rect x="712" y="752.0" width="128" height="40" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="712" y="752.0" width="128" height="40" rx="4" fill="#fdf4e3" stroke="#E69F00" stroke-width="1"/>
     <text x="776" y="769.0" text-anchor="middle" fill="#1a1a1a">crossover</text>
     <text x="776" y="783.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">and mutate</text>
   </g>
 
-  <g stroke="#0072B2" stroke-width="1.2" fill="none" marker-end="url(#arrowBlue)">
+  <g stroke="#E69F00" stroke-width="1.2" fill="none" marker-end="url(#arrowAmber)">
     <path d="M 678 696.0 L 706 696.0"/>
     <path d="M 840 696.0 L 868 696.0"/>
     <path d="M 935 716.0 L 935 772.0 L 846 772.0"/>
@@ -206,28 +210,28 @@
   <text x="550" y="806.0" font-size="10.5" fill="#6b6b6b">Random initialisation, never seeded. Convergence from independent</text>
   <text x="550" y="820.0" font-size="10.5" fill="#6b6b6b">runs is the only available evidence of a global optimum.</text>
 
-  <!-- ===================== MONITORING ===================== -->
+  <!-- ===================== MONITORING (slate) ===================== -->
   <rect x="24" y="848.0" width="992" height="140" rx="6" fill="#ffffff" stroke="#e6e6e2" stroke-width="1"/>
   <text x="44" y="876.0" font-size="13" font-weight="600" fill="#1a1a1a">Monitoring, while it runs</text>
   <text x="982" y="876.0" font-size="11" fill="#8a8a85" text-anchor="end">tools/ga_report.py</text>
 
   <g font-size="11">
-    <rect x="44" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="44" y="896.0" width="164" height="68" rx="4" fill="#f0f1f4" stroke="#7d8795" stroke-width="1"/>
     <text x="126" y="917.0" text-anchor="middle" fill="#1a1a1a">fitness</text>
     <text x="126" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">best, parent pool,</text>
     <text x="126" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">population mean</text>
 
-    <rect x="224" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="224" y="896.0" width="164" height="68" rx="4" fill="#f0f1f4" stroke="#7d8795" stroke-width="1"/>
     <text x="306" y="917.0" text-anchor="middle" fill="#1a1a1a">diversity</text>
     <text x="306" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">pairwise distance and</text>
     <text x="306" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">positional entropy</text>
 
-    <rect x="404" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="404" y="896.0" width="164" height="68" rx="4" fill="#f0f1f4" stroke="#7d8795" stroke-width="1"/>
     <text x="486" y="917.0" text-anchor="middle" fill="#1a1a1a">composition</text>
     <text x="486" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">residue groups over time,</text>
     <text x="486" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">frequency by position</text>
 
-    <rect x="584" y="896.0" width="164" height="68" rx="4" fill="#f2f7fb" stroke="#0072B2" stroke-width="1"/>
+    <rect x="584" y="896.0" width="164" height="68" rx="4" fill="#f0f1f4" stroke="#7d8795" stroke-width="1"/>
     <text x="666" y="917.0" text-anchor="middle" fill="#1a1a1a">timing</text>
     <text x="666" y="934.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">per step: median, p90,</text>
     <text x="666" y="950.0" text-anchor="middle" fill="#6b6b6b" font-size="9.5">share of wall time</text>
@@ -238,7 +242,32 @@
   <text x="774" y="950.0" font-size="10.5" fill="#6b6b6b">motif from a collapsed population. Positional</text>
   <text x="774" y="966.0" font-size="10.5" fill="#6b6b6b">entropy separates them.</text>
 
-  <text x="44" y="1022.0" font-size="10" fill="#8a8a85">Box 8.0 x 8.0 nm, Martini 3, constant-area ensemble. The constant-area coupling is load-bearing: under a constant-tension barostat the area would</text>
-  <text x="44" y="1038.0" font-size="10" fill="#8a8a85">respond instead of the surface tension, and the damage observable would vanish.</text>
-  <text x="44" y="1058.0" font-size="10" fill="#8a8a85">The equilibrated membrane is a committed, versioned reference (tools/build_reference_membranes.sh); the campaign checkpoints each iteration and resumes with --restart.</text>
+  <!-- ===================== LEGEND ===================== -->
+  <text x="44" y="1016.0" font-size="11" font-weight="600" fill="#1a1a1a">Boxes are coloured by process</text>
+  <g font-size="10">
+    <rect x="44"  y="1028.0" width="14" height="12" rx="2" fill="#eef5fb" stroke="#0072B2" stroke-width="1"/>
+    <text x="64"  y="1038.0" fill="#6b6b6b">membrane preparation</text>
+
+    <rect x="214" y="1028.0" width="14" height="12" rx="2" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
+    <text x="234" y="1038.0" fill="#6b6b6b">per-candidate pipeline</text>
+
+    <rect x="384" y="1028.0" width="14" height="12" rx="2" fill="#fdf4e3" stroke="#E69F00" stroke-width="1"/>
+    <text x="404" y="1038.0" fill="#6b6b6b">campaign (genetic algorithm)</text>
+
+    <rect x="594" y="1028.0" width="14" height="12" rx="2" fill="#f0f1f4" stroke="#7d8795" stroke-width="1"/>
+    <text x="614" y="1038.0" fill="#6b6b6b">monitoring</text>
+
+    <rect x="714" y="1028.0" width="14" height="12" rx="2" fill="#f7f7f5" stroke="#c9c9c3" stroke-width="1"/>
+    <text x="734" y="1038.0" fill="#6b6b6b">input</text>
+
+    <rect x="794" y="1028.0" width="14" height="12" rx="2" fill="#e9f6f1" stroke="#009E73" stroke-width="1"/>
+    <text x="814" y="1038.0" fill="#6b6b6b">produced data</text>
+
+    <rect x="914" y="1028.0" width="14" height="12" rx="2" fill="#fcefe7" stroke="#D55E00" stroke-width="1"/>
+    <text x="934" y="1038.0" fill="#6b6b6b">objective</text>
+  </g>
+
+  <text x="44" y="1078.0" font-size="10" fill="#8a8a85">Box 8.0 x 8.0 nm, Martini 3, constant-area ensemble. The constant-area coupling is load-bearing: under a constant-tension barostat the area would</text>
+  <text x="44" y="1094.0" font-size="10" fill="#8a8a85">respond instead of the surface tension, and the damage observable would vanish.</text>
+  <text x="44" y="1114.0" font-size="10" fill="#8a8a85">The equilibrated membrane is a committed, versioned reference (tools/build_reference_membranes.sh); the campaign checkpoints each iteration and resumes with --restart.</text>
 </svg>

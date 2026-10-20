@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Open a coarse-grained membrane in VMD with Martini-friendly representations, optionally with a
-# peptide and a trajectory. Lipids are drawn as beads coloured by type, the peptide is
-# highlighted, water as a transparent surface, and ions small, all in a chalky
-# matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
+# peptide and a trajectory. Lipids are drawn as licorice sticks (small beads for a bond-less .gro)
+# coloured by type, the peptide highlighted, water as a transparent surface, and ions small, all in
+# a chalky matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
 # pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
 # with this repository's file names.
 #
@@ -89,14 +89,23 @@ set pept   "not ($lipids or $water or $ions)"
 
 mol delrep 0 top
 
-# one representation per lipid type actually present, each in its own flat colour so the types
-# are visually separate and individually toggleable in the Representations dialog
+# Licorice (the Martini-tutorial stick look) needs bonds to draw the sticks. A .tpr carries them
+# from the topology; a .gro does not (VMD's distance search finds none for coarse-grained beads),
+# so draw the lipids as licorice when bonds are present and fall back to small VDW beads otherwise.
+set _all [atomselect top all]
+set _nbonds 0
+foreach _bl [$_all getbonds] { incr _nbonds [llength $_bl] }
+$_all delete
+set lipid_rep [expr {$_nbonds > 0 ? "Licorice 1.0 12.0 12.0" : "VDW 1.0 20.0"}]
+
+# one representation per lipid type actually present, each in its own flat colour (unchanged by the
+# stick/bead choice) so the types are visually separate and individually toggleable
 foreach lip $lipid_order {
     set sel [atomselect top "resname $lip"]
     set n [$sel num]
     $sel delete
     if {$n == 0} { continue }
-    mol representation VDW 1.0 20.0
+    mol representation $lipid_rep
     mol color ColorID $lipid_color($lip)
     mol selection "resname $lip"
     mol material AOChalky

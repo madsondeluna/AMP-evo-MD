@@ -1197,12 +1197,13 @@ is individually toggleable and the same command works on a bare bilayer and on a
 ![How tools/vmd_view.sh is used and what it draws](docs/vmd_view.png)
 
 **What it draws.** One representation per lipid type present, each in a flat colour of its own so
-the types are visually separate and can be toggled independently in `Graphics > Representations`;
-the peptide in yellow and slightly larger; ions as small beads coloured by name; and water as a
-transparent QuickSurf surface (the Martini-tutorial look), all in a chalky matte style (VMD's
-`AOChalky` material with ambient occlusion, orthographic projection). Set `VIEW_HIDE_WATER=1` to
-drop the water surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to
-draw it.
+the types are visually separate and can be toggled independently in `Graphics > Representations`.
+Lipids are drawn as licorice sticks (the Martini-tutorial look) when the structure carries bonds (a
+`.tpr`), and as small beads for a bond-less `.gro` (VMD finds no bonds for coarse-grained beads by
+distance). The peptide is in yellow and slightly larger; ions as small beads coloured by name; and
+water as a transparent QuickSurf surface, all in a chalky matte style (VMD's `AOChalky` material
+with ambient occlusion, orthographic projection). Set `VIEW_HIDE_WATER=1` to drop the water
+surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to draw it.
 
 **Try it now.** The equilibrated bacterial reference membrane is committed, so this runs straight
 after a clone or pull, with nothing to build first:

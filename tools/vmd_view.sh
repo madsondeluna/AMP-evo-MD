@@ -24,6 +24,8 @@
 #     The bilayer is kept centred over the run and every representation is smoothed (5-frame window).
 #   - One representation is created per lipid type present, plus peptide, ions and water, each
 #     toggleable in Graphics > Representations.
+#   - Lipids default to Licorice sticks; set VIEW_LIPID_REP to try another style, e.g.
+#     VIEW_LIPID_REP="Bonds 1.0 12.0" or VIEW_LIPID_REP="VDW 1.0 20.0".
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
 #   - Set VMD=/path/to/vmd if vmd is not on PATH (for example a module's binary).
@@ -89,14 +91,24 @@ set pept   "not ($lipids or $water or $ions)"
 
 mol delrep 0 top
 
-# Licorice (the Martini-tutorial stick look) needs bonds to draw the sticks. A .tpr carries them
-# from the topology; a .gro does not (VMD's distance search finds none for coarse-grained beads),
-# so draw the lipids as licorice when bonds are present and fall back to small VDW beads otherwise.
+# Lipid drawing style. Override it with VIEW_LIPID_REP to try others live without editing, e.g.
+#   VIEW_LIPID_REP="Bonds 1.0 12.0"      sticks without end spheres
+#   VIEW_LIPID_REP="CPK 1.0 0.3 12 12"   small balls joined by thin sticks
+#   VIEW_LIPID_REP="VDW 1.0 20.0"        space-filling beads (no sticks)
+#   VIEW_LIPID_REP="Licorice 1.0 12 12"  the default stick look (rounded joints)
+# The default is Licorice, the Martini-tutorial stick look. Licorice, Bonds and CPK all need bonds
+# to draw their sticks: a .tpr carries them from the topology, but a .gro does not (VMD's distance
+# search finds none for coarse-grained beads), so with no explicit override and no bonds the lipids
+# fall back to small VDW beads, which is all a bare .gro can show.
 set _all [atomselect top all]
 set _nbonds 0
 foreach _bl [$_all getbonds] { incr _nbonds [llength $_bl] }
 $_all delete
-set lipid_rep [expr {$_nbonds > 0 ? "Licorice 1.0 12.0 12.0" : "VDW 1.0 20.0"}]
+if {[info exists env(VIEW_LIPID_REP)] && $env(VIEW_LIPID_REP) ne ""} {
+    set lipid_rep $env(VIEW_LIPID_REP)
+} else {
+    set lipid_rep [expr {$_nbonds > 0 ? "Licorice 1.0 12.0 12.0" : "VDW 1.0 20.0"}]
+}
 
 # one representation per lipid type actually present, each in its own flat colour (unchanged by the
 # stick/bead choice) so the types are visually separate and individually toggleable

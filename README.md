@@ -1203,7 +1203,9 @@ Lipids are drawn as licorice sticks (the Martini-tutorial look) when the structu
 distance). The peptide is in yellow and slightly larger; ions as small beads coloured by name; and
 water as a transparent QuickSurf surface, all in a chalky matte style (VMD's `AOChalky` material
 with ambient occlusion, orthographic projection). Set `VIEW_HIDE_WATER=1` to drop the water
-surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to draw it.
+surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to draw it. To try
+a different lipid style without editing, set `VIEW_LIPID_REP`, for example `"Bonds 1.0 12.0"` or
+`"VDW 1.0 20.0"`.
 
 **Try it now.** The equilibrated bacterial reference membrane is committed, so this runs straight
 after a clone or pull, with nothing to build first:

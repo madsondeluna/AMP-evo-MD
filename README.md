@@ -1050,15 +1050,29 @@ and guessing from a wall of GROMACS output is not an answer.
 campaign_damage/
   output.txt                     the GA progress file: fitness per iteration
   checkpoint.dat                 restart state
-  KWLRKAFKKLASKALQSLWSALAQ/      one directory per candidate
+  KWLRKAFKKLASKALQSLWSALAQ/      one directory per candidate, named by its sequence
     steps.jsonl                  one record per pipeline step
     stdout_stderr.log            every command, with a banner between steps
-    observables.json             the measurements, and which GROMACS produced them
+    observables.json             the measurements, per membrane, and which GROMACS produced them
     fitness                      the score and its components
+    production_bacterial.gro     final coordinates, one set per membrane
+    production_bacterial.edr     energies: surface tension, box, interaction terms
+    production_bacterial.tpr     the run input, carries topology and bonds (load this in VMD)
     production_bacterial.log     mdrun log: performance, decomposition, warnings
-    production_host.log
+    production_bacterial.xtc     the trajectory, ONLY when WRITE_XTC = True
+    production_host.*            the same set for the second membrane, when two are used
     failed_<step>/               only on failure: the working directory as it broke
 ```
+
+Two things to read off this. Files are kept **per candidate** (one directory per sequence) and
+**per membrane** (`production_bacterial.*`, `production_host.*`): separate files, not a single
+combined one. And the **trajectory** (`.xtc`), the file you load in VMD to watch the peptide move
+in the bilayer, is kept only when `WRITE_XTC = True`. A campaign forces it `False`, because a
+trajectory per candidate across thousands of evaluations fills a disk, so a campaign keeps the
+measurements, the final structure, the energies and the logs, but discards the time-resolved
+trajectory after `observables.json` is computed from it. To keep trajectories, set
+`WRITE_XTC = True`: practical for the calibration set, or for re-running a handful of candidates
+(the campaign's best, say) on their own afterwards.
 
 ### steps.jsonl
 
@@ -1132,6 +1146,26 @@ TIMING BY STEP
 Median and 90th percentile sit beside the mean because the operational question is the tail. A
 handful of candidates taking many times longer than typical is what decides whether a campaign
 finishes this week, and a mean hides exactly that.
+
+### Visualising in VMD
+
+`tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, with Martini-friendly
+representations: lipids as beads coloured by type, the peptide highlighted, water hidden, ions
+small, and the periodic box drawn. It takes a structure and an optional trajectory.
+
+```bash
+tools/vmd_view.sh prep/bacterial/equil.gro                             # the equilibrated membrane
+tools/vmd_view.sh prep/bacterial/min.tpr prep/bacterial/equil.xtc      # the membrane, with its trajectory
+tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
+                  output/<SEQ>/production_bacterial.xtc                 # a candidate: peptide in the membrane
+```
+
+Prefer the `.tpr` over the `.gro` as the structure: it carries the bonds, so the beads are drawn
+connected rather than loose. To watch the peptide interact with the bilayer over time you need the
+trajectory, which exists only when `WRITE_XTC = True` (see
+[Where everything lands](#where-everything-lands)); re-run the candidates you want to inspect with
+it on, since a full campaign keeps no trajectories. Set `VMD=/path/to/vmd` if `vmd` is not on the
+PATH, for example a module's binary.
 
 ### Diagnosing a failure
 
@@ -1555,6 +1589,8 @@ user/
   base/                      mdp files and Martini 3 force field
 tools/
   protocol.sh                membrane preparation, end to end
+  build_reference_membranes.sh  pinned recipe for the committed reference membranes
+  vmd_view.sh                open a membrane or a candidate run in VMD, Martini style
   membrane.py                plan lipid counts, calibrate the reference constants
   membrane_analysis.py       equilibration verdict and cross-membrane comparison
   ga_report.py               campaign performance, diversity and composition

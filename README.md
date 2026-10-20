@@ -133,6 +133,67 @@ in the membrane build, and the exclusion of isoleucine on the grounds documented
 `user/usersettings.py`. Replicate evaluations per candidate are not yet implemented; the genetic
 algorithm's rerun averaging covers only the elites.
 
+## The membrane system
+
+The target is a Gram-negative inner-membrane mimic: **POPE:POPG in a 3:1 ratio** (70:30), built
+with the Martini 3 coarse-grained force field and non-polarisable water. POPG makes the bilayer
+anionic, which is the property antimicrobial peptides discriminate on. Cardiolipin (CDL2) belongs
+in a faithful inner-membrane mimic and is what makes it most strongly anionic, but its Martini 3
+parameters are not shipped here, so the first campaigns run on POPE:POPG and add cardiolipin once
+its parameters are in place. The host mimic, used only by the binding objective's selectivity
+term, needs cholesterol and sphingomyelin for the same reason and is deferred on the same grounds
+rather than approximated by a neutral bilayer.
+
+Size, as built:
+
+| property | value |
+|---|---|
+| composition | POPE:POPG 3:1 (70% POPE, 30% POPG) |
+| lateral box | 8.0 x 8.0 nm, held at constant area |
+| box height | about 9.7 nm (membrane plus two water slabs) |
+| lipids | about 208 (104 per leaflet) |
+| water | about 2900 Martini W beads, roughly 14 per lipid |
+| salt | 0.15 mol/L NaCl, on top of neutralising counterions |
+| beads, total | about 5300 |
+| force field | Martini 3, non-polarisable water |
+
+The equilibrated structure is produced once at zero tension and reused for every candidate (see
+[The equilibrated membrane is a committed standard](#the-equilibrated-membrane-is-a-committed-standard)),
+so the per-candidate cost is only the peptide insertion and the production run.
+
+### What is measured
+
+Each production run writes one `observables.json`. Five quantities are read from it, and the two
+objectives are pure functions of these, which is why re-scoring under the other objective needs
+no new simulation.
+
+| variable | symbol | what it is | source |
+|---|---|---|---|
+| surface tension | gamma | leaflet tension at the fixed area | `gmx energy`, the `#Surf*SurfTen` term |
+| induced strain | delta_gamma | gamma(free membrane) minus gamma(membrane with peptide) | difference against the reference membrane |
+| interaction energy | e_lipids, e_sol | peptide-lipid and peptide-solvent Coulomb and Lennard-Jones energy | `gmx energy` on index energy groups |
+| insertion depth | d_mem | how deep the peptide sits relative to the bilayer midplane | trajectory analysis |
+| orientation factor | | a cosine window in [0, 1]: whether the peptide was at the interface at all | averaged over frames, not taken at the mean depth |
+
+`delta_gamma` drives the damage objective; the interaction energy and depth are the candidate
+proxies for the binding objective; the orientation factor gates both, rejecting a candidate that
+left the interface rather than scaling its score.
+
+### How it compares to the source papers
+
+| | van Hilten 2023 (source) | Biriukov and Vacha 2026 (Evo-MD-FE) | this fork (AMP-evo-MD) |
+|---|---|---|---|
+| membrane | POPC, single component | POPE:POPG 3:1 | POPE:POPG 3:1 (host mimic deferred) |
+| force field | Martini 3 | Martini 2.2, polarisable water | Martini 3, non-polarisable water |
+| geometry | flat bilayer, two tension states | lipid stripe with a pore rim | flat bilayer, constant area |
+| observable | curvature-sensing free energy | pore line tension, umbrella sampling | induced leaflet strain, or partitioning selectivity |
+| the GA optimises | curvature sensing | line-tension reduction | membrane damage, or binding selectivity |
+
+The composition matches Biriukov and Vacha; the force field and water model match van Hilten. The
+reasons for keeping Martini 3 non-polarisable water, rather than importing their polarisable
+charge-related conclusions as a prior, are in [Relation to Evo-MD-FE](#relation-to-evo-md-fe)
+above.
+
 ## Order of work
 
 The calibration run comes first, and it uses no genetic algorithm.
@@ -676,7 +737,7 @@ Expect to need the second pass more than for the bacterial membrane.
 Useful overrides:
 
 ```bash
-BOX=8.0 MAX_RESIDUES=30 SALT=0.15 EQUIL_NS=200 PROD_NS=400 \
+BOX=8.0 MAX_RESIDUES=30 SALT=0.15 EQUIL_NS=500 PROD_NS=400 \
     AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
 ```
 
@@ -706,6 +767,50 @@ cp prep/host/host.top              user/base/insert_peptide/membrane_host.top
 
 python -c "import user.membranes as m; m.require_all_calibrated(); print('membranes calibrated')"
 ```
+
+### The equilibrated membrane is a committed standard
+
+The equilibrated membrane is produced once, at zero tension for a pinned length, and the
+structure is committed to the repository, so every machine starts from the identical membrane
+instead of re-equilibrating. The recipe is versioned in `tools/build_reference_membranes.sh`,
+which pins the composition, box, salt and the equilibration length. **The standard equilibration
+is 500 ns** (the `protocol.sh` default of 200 ns is a floor for exploratory builds).
+
+```bash
+tmux new -s equil
+source ~/amp-env.sh
+cd ~/AMP-evo-MD
+tools/build_reference_membranes.sh 2>&1 | tee ~/equil500.log   # EQUIL_NS=500 is pinned in the recipe
+# detach with Ctrl-b then d; reattach with tmux attach -t equil
+```
+
+At the measured rate this is about 1.1 h of wall time on 10 cores (see
+[Resource planning](#resource-planning)), plus the build and minimisation. When it finishes, the
+equilibrated structure is `prep/bacterial/equil.gro`; copy it and its topology into place and
+commit them, so the membrane travels with the code:
+
+```bash
+cp prep/bacterial/equil.gro     user/base/insert_peptide/membrane_bacterial.gro
+cp prep/bacterial/bacterial.top user/base/insert_peptide/membrane_bacterial.top
+```
+
+Two senses of reproducibility, both covered. The committed `.gro` gives the **same structure** on
+every machine, with no re-equilibration. Re-running the recipe gives the **same protocol**: a
+molecular-dynamics trajectory is not bit-reproducible across machines or GROMACS builds, so it
+does not reproduce the structure byte for byte, but it reproduces the composition, the force field
+and the equilibrium area per lipid, which is the membrane in every sense the physics depends on.
+
+If the machine reboots mid-run, resume the equilibration from its last GROMACS checkpoint rather
+than restarting:
+
+```bash
+cd ~/AMP-evo-MD/prep/bacterial && gmx mdrun -cpi equil.cpt -deffnm equil -nt 10
+```
+
+The genetic-algorithm campaign has its own, higher-level checkpointing (it writes `checkpoint.dat`
+every iteration and resumes with `--restart`, described under
+[Step 4](#step-4-run-a-campaign)); that is what makes it safe to pause a multi-day campaign and
+resume days later.
 
 ### Step 2: measure the calibration set
 
@@ -877,21 +982,51 @@ dataset is a post-processing step, not a second campaign.
 
 ### Resource planning
 
-Per candidate, two production runs of 400 ns each on a roughly 8 x 8 x 9 nm coarse-grained
-system. The exact wall time depends heavily on the build and whether a GPU is available, so
-measure it rather than taking an estimate: run a single sequence through `STATE = 1` and time
-it.
+Per candidate, one or two production runs of 400 ns each on the roughly 8 x 8 x 9 nm
+coarse-grained system described under [The membrane system](#the-membrane-system). The wall time
+depends on the build and on whether a GPU is available, so it is measured rather than estimated:
+run a single sequence through `STATE = 1` and time it, or read it off the membrane
+equilibration, which is the same ensemble.
 
 ```bash
 printf 'GIGKFLHSAKKFGKAFVGEIMNS\n' > seq.txt   # in the repository root, where run.py reads it
 time mpirun -np 1 python -m mpi4py run.py --output_dir timing_test
 ```
 
-Multiply that by the population size and the iteration count. A default campaign is 144
-candidates over 100 iterations, which is roughly 14 400 evaluations before deduplication; the GA
-reuses the stored fitness of sequences it has already simulated, so the real count is lower, but
-the order of magnitude is what matters when deciding whether the workstation is the right place
-to run this at all.
+**Measured on the development workstation** (two Xeon Silver 4210R, GPU offline, so CPU only):
+**4357 ns/day on 10 cores** for the membrane system at the equilibration timestep of 0.02 ps.
+Production runs at 0.03 ps and should be close to 1.5 times faster per nanosecond, since the
+per-step cost is nearly constant. Taking the measured figure as a conservative floor:
+
+| per candidate | production | wall time, 10 cores |
+|---|---|---|
+| 1 membrane (bacterial target only) | 400 ns | about 2.2 h |
+| 2 membranes (target and host) | 800 ns | about 4.4 h |
+
+Scaled to a campaign, with the 20 cores saturated by running candidates in parallel (a floor of
+about 8700 ns/day aggregate):
+
+| campaign | evaluations (about pop x iter) | membranes x ns | wall time |
+|---|---|---|---|
+| published scale, 144 x 100 | 14 400 | 2 x 400 | about 3.6 years |
+| published scale, 1 membrane | 14 400 | 1 x 400 | about 1.8 years |
+| learning scale, 32 x 20 | 640 | 1 x 200 | about 15 days |
+| learning scale, 24 x 10 | 240 | 1 x 200 | about 5.5 days |
+| learning scale, 24 x 10 | 240 | 1 x 100 | about 2.8 days |
+
+The reading is blunt: a discovery-scale campaign is cluster territory, not a single workstation.
+What fits here is a **learning-scale campaign**, population 24 to 32 over 10 to 20 iterations, one
+membrane (the bacterial target), production shortened to 100 to 200 ns, which finishes in days to
+two weeks. That is the right first run in any case: it is enough to watch the genetic algorithm
+converge or collapse, to calibrate the objective window, and to iterate on the algorithm itself
+before committing machine-months to a full search. The two levers, in order of impact, are
+parallel candidate evaluation with `mpi4py` across the 20 cores, and cutting the per-candidate
+cost (one membrane instead of two, shorter production for the learning phase).
+
+Measure the real aggregate rate before sizing a campaign: run two and then four candidates at
+once, with 10 and 5 cores each, and compare the summed ns/day. For a system this small, more
+candidates on fewer cores each usually beats fewer candidates on more cores, so the aggregate can
+exceed the simple floor above.
 
 Disk: with `WRITE_XTC = False` each candidate leaves a few megabytes. With it on, budget
 hundreds of megabytes per candidate, which is why it is only enabled for the calibration set.

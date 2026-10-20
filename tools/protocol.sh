@@ -52,6 +52,20 @@ MDP_DIR="${HERE}/user/base/production"
 
 say() { printf '\n=== %s ===\n' "$1"; }
 
+# Build the index the Evo-MD mdps' tc-grps refer to (Lipids, Solvent, and Protein when a peptide
+# is present). insane writes no index and Martini water "W" is not a GROMACS default Water group,
+# so grompp cannot resolve these names on its own. This reuses the per-candidate pipeline's
+# builder so both paths group atoms identically. $1 = structure to classify, $2 = output index.
+build_index() {
+    python3 -I - "$1" "$2" <<NDXPY
+import sys
+sys.path.insert(0, "${HERE}")
+import core.gromacs as Gromacs
+import user.usersettings as U
+Gromacs.NDX_from_GRO(sys.argv[1], sys.argv[2], U.resnm_to_indexgroup_dict)
+NDXPY
+}
+
 # ---------------------------------------------------------------------------
 # Everything this script needs, checked before the first step rather than discovered at the one
 # that happens to use it. The build is step 2 and the analysis is step 7, so a missing insane or
@@ -182,11 +196,30 @@ sed -i 's|#include "martini.itp"|#include "martini_v3.0.0.itp"\n#include "martin
 # width as what they replace, so the fixed-column .gro stays aligned.
 sed -i -e 's/NA+/NA /g' -e 's/CL-/CL /g' "${NAME}.top" "${NAME}_raw.gro"
 
+# The Evo-MD mdps couple temperature on groups named Lipids, Solvent and Protein. These are NOT
+# GROMACS default groups: insane writes no index, and Martini water "W" is not recognised as
+# Water, so a grompp without an index finds neither Lipids nor Solvent and aborts (the first
+# real membrane run failed exactly here). Build the index the same way the per-candidate pipeline
+# does -- core.gromacs.NDX_from_GRO with the force field's residue-to-group map -- so the
+# membrane-only runs and the candidate runs resolve groups identically. A peptide-free membrane
+# yields Lipids and Solvent and no Protein, which is why the tc-grps below drop Protein. Atom
+# order is fixed through minimisation and equilibration, so this single index serves every grompp
+# in pass 1.
+build_index "${NAME}_raw.gro" index.ndx
+
 # ---------------------------------------------------------------------------
 say "3/7  minimise"
 # ---------------------------------------------------------------------------
-sed "s|\$INCLUDE_CWD|-I$(pwd)|" "${MDP_DIR}/steep_softcore_system.mdp" > min.mdp
-"${GMX}" grompp -f min.mdp -c "${NAME}_raw.gro" -p "${NAME}.top" -o min.tpr -maxwarn 2
+# steep_softcore_system.mdp names tc-grps "Lipids Solvent Protein". This membrane has no peptide,
+# so Protein cannot exist; couple the two groups that do. Tcoupl is off during minimisation, but
+# grompp still validates every tc-grps name, so the index and the trimmed group list are both
+# needed here, not only in the dynamics steps.
+sed -e "s|\$INCLUDE_CWD|-I$(pwd)|" \
+    -e "s|^tc-grps.*|tc-grps                  = Lipids Solvent|" \
+    -e "s|^tau_t.*|tau_t                    = 1.0 1.0|" \
+    -e "s|^ref_t.*|ref_t                    = 310 310|" \
+    "${MDP_DIR}/steep_softcore_system.mdp" > min.mdp
+"${GMX}" grompp -f min.mdp -c "${NAME}_raw.gro" -p "${NAME}.top" -o min.tpr -n index.ndx -maxwarn 2
 "${GMX}" mdrun -deffnm min -nt "${NT}"
 
 # ---------------------------------------------------------------------------
@@ -210,7 +243,7 @@ vdw_type                 = cutoff
 vdw-modifier             = Potential-shift-verlet
 rvdw                     = 1.1
 tcoupl                   = v-rescale
-tc-grps                  = Solvent non-Solvent
+tc-grps                  = Lipids Solvent
 tau_t                    = 1.0 1.0
 ref_t                    = 310 310
 Pcoupl                   = C-rescale
@@ -222,7 +255,7 @@ gen_vel                  = yes
 gen_temp                 = 310
 refcoord_scaling         = all
 EOF
-"${GMX}" grompp -f equil.mdp -c min.gro -p "${NAME}.top" -o equil.tpr -maxwarn 2
+"${GMX}" grompp -f equil.mdp -c min.gro -p "${NAME}.top" -o equil.tpr -n index.ndx -maxwarn 2
 "${GMX}" mdrun -deffnm equil -nt "${NT}"
 
 # ---------------------------------------------------------------------------
@@ -286,29 +319,35 @@ fi   # end of the pass-1 branch
 # ---------------------------------------------------------------------------
 cp equil.gro "${NAME}_eq.gro"
 
+# Rebuild the index from the structure production will actually use. In pass 1 this matches the
+# one built after the membrane was assembled, but PASS=2 resumes from a system the operator
+# rebuilt by hand with a different lipid count, where no post-build index exists and a pass-1
+# index would have the wrong atom count. Building from eq.gro is correct for both.
+build_index "${NAME}_eq.gro" index.ndx
+
 # The production mdp is written for peptide-in-membrane systems: its tc-grps names Protein,
-# Solvent and Lipids, which the pipeline builds with its own make_ndx. This membrane has no
-# peptide, so a Protein group cannot exist and grompp would abort on it. Couple the two groups
-# that do exist here instead, leaving every other setting in npt.mdp untouched so the reference
-# run and the candidate runs share an identical ensemble, which is the whole point of measuring
-# a reference.
+# Solvent and Lipids, and its energygrps decompose the peptide-membrane interaction. This
+# reference membrane has no peptide, so Protein cannot exist and grompp would abort on it. Couple
+# the two groups that do exist (Lipids and Solvent, from the index above) and clear energygrps,
+# leaving every other setting in npt.mdp untouched so the reference run and the candidate runs
+# share an identical ensemble, which is the whole point of measuring a reference.
 sed -e "s|\$INCLUDE_CWD|-I$(pwd)|" \
     -e "s|\$SIM_DT|0.03|" \
     -e "s|\$SIM_NSTEPS|$(python3 -c "print(int(${PROD_NS}*1000/0.03))")|" \
-    -e "s|^tc-grps.*|tc-grps                  = Solvent non-Solvent|" \
+    -e "s|^tc-grps.*|tc-grps                  = Lipids Solvent|" \
     -e "s|^tau_t.*|tau_t                    = 1.0 1.0|" \
     -e "s|^ref_t.*|ref_t                    = 310 310|" \
     -e "s|^energygrps.*|energygrps               =|" \
     "${MDP_DIR}/npt.mdp" > prod.mdp
 
-# Solvent and non-Solvent are GROMACS default groups, so no index file is needed. Confirm the
-# substitution took, because a silently unmodified mdp fails later and more confusingly.
+# Confirm the substitution took: a silently unmodified mdp still names Protein and fails later,
+# more confusingly. Lipids and Solvent are supplied by index.ndx, passed to grompp with -n.
 if grep -q "Protein" prod.mdp; then
     echo "prod.mdp still references a Protein group; the tc-grps substitution did not apply." >&2
     exit 1
 fi
 
-"${GMX}" grompp -f prod.mdp -c "${NAME}_eq.gro" -p "${NAME}.top" -o "${NAME}.tpr" -maxwarn 2
+"${GMX}" grompp -f prod.mdp -c "${NAME}_eq.gro" -p "${NAME}.top" -o "${NAME}.tpr" -n index.ndx -maxwarn 2
 "${GMX}" mdrun -deffnm "${NAME}" -nt "${NT}"
 
 # ---------------------------------------------------------------------------

@@ -1188,25 +1188,43 @@ finishes this week, and a mean hides exactly that.
 
 ### Visualising in VMD
 
-`tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, with Martini-friendly
-representations: lipids as beads coloured by type, the peptide highlighted, water as a transparent
-QuickSurf surface (the Martini-tutorial look), ions small, and the periodic box drawn, in a chalky
-matte style (VMD's AOChalky material with ambient occlusion, orthographic). It takes a structure
-and an optional trajectory. Set `VIEW_HIDE_WATER=1` to drop the water surface.
+`tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, in VMD with Martini-friendly
+representations. It takes a **structure** and an **optional trajectory**, works out what each
+residue is (lipid, water, ion, or peptide) from its name, and builds one representation per class,
+so the same command works on a bare bilayer and on a candidate run without any editing.
+
+![How tools/vmd_view.sh is used and what it draws](docs/vmd_view.png)
+
+**What it draws.** Lipids as beads coloured by residue (so POPE and POPG are told apart), the
+peptide in yellow and slightly larger, ions as small beads, and water as a transparent QuickSurf
+surface (the Martini-tutorial look), with the periodic box outlined, all in a chalky matte style
+(VMD's `AOChalky` material with ambient occlusion, orthographic projection). Set
+`VIEW_HIDE_WATER=1` to drop the water surface.
+
+**Try it now.** The equilibrated bacterial reference membrane is committed, so this runs straight
+after a clone or pull, with nothing to build first:
 
 ```bash
-tools/vmd_view.sh prep/bacterial/equil.gro                             # the equilibrated membrane
+tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro      # the committed reference
+```
+
+Other inputs, once you have run the pipeline:
+
+```bash
+tools/vmd_view.sh prep/bacterial/equil.gro                             # a membrane you just built
 tools/vmd_view.sh prep/bacterial/min.tpr prep/bacterial/equil.xtc      # the membrane, with its trajectory
 tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
                   output/<SEQ>/production_bacterial.xtc                 # a candidate: peptide in the membrane
 ```
 
 Prefer the `.tpr` over the `.gro` as the structure: it carries the bonds, so the beads are drawn
-connected rather than loose. To watch the peptide interact with the bilayer over time you need the
-trajectory, which exists only when `WRITE_XTC = True` (see
-[Where everything lands](#where-everything-lands)); re-run the candidates you want to inspect with
-it on, since a full campaign keeps no trajectories. Set `VMD=/path/to/vmd` if `vmd` is not on the
-PATH, for example a module's binary.
+connected rather than loose (a `.gro` has no connectivity, which is still perfectly readable for a
+membrane). To watch the peptide interact with the bilayer over time you need the trajectory, which
+exists only when `WRITE_XTC = True` (see [Where everything lands](#where-everything-lands)); re-run
+the candidates you want to inspect with it on, since a full campaign keeps no trajectories. Set
+`VMD=/path/to/vmd` if `vmd` is not on the PATH, for example a module's binary. For a clean still,
+use `File > Render` with the Tachyon renderer, or `render TachyonInternal view.tga` from the VMD
+console.
 
 ### Diagnosing a failure
 

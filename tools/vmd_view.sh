@@ -8,10 +8,14 @@
 # with this repository's file names.
 #
 # Usage:
-#   tools/vmd_view.sh prep/bacterial/equil.gro                                   # just the membrane
+#   tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro            # the committed reference
+#   tools/vmd_view.sh prep/bacterial/equil.gro                                   # a membrane you just built
 #   tools/vmd_view.sh prep/bacterial/min.tpr prep/bacterial/equil.xtc            # with a trajectory
 #   tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
 #                     output/<SEQ>/production_bacterial.xtc                      # a peptide in a membrane
+#
+# The first line runs straight after a clone or pull: the equilibrated bacterial reference membrane
+# ships with the repository, so there is nothing to build first.
 #
 # Notes:
 #   - A .tpr as the structure carries the bonds, so the beads are drawn connected. A .gro has no

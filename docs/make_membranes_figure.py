@@ -1,11 +1,12 @@
-# Build docs/membranes.png: the three lipids shown atom-by-atom and as Martini 3 CG beads, side by
-# side and in the same colours so the mapping is readable, plus the two membranes' topology and
-# charge balance. Needs only matplotlib. Regenerate with: python docs/make_membranes_figure.py
+# Build docs/membranes.png: the three lipids shown atom by atom and as Martini 3 CG beads, in the
+# same colours, plus the two membranes' composition and charge balance. Needs only matplotlib.
+# Regenerate with: python docs/make_membranes_figure.py
 import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, FancyBboxPatch
+from matplotlib.lines import Line2D
 
 # ---- shared palette (all-atom atoms and CG beads use the same colours) ----------------
 C_POS   = "#4C72B0"   # cationic head (NC3, NH3)  -> +1
@@ -14,6 +15,9 @@ C_NEUT  = "#8172B3"   # neutral polar head (GL0)  ->  0
 C_GLY   = "#55A868"   # glycerol / ester linkers (GL1, GL2)
 C_SAT   = "#B8B8B8"   # saturated tail bead (C1)
 C_UNSAT = "#DD8452"   # unsaturated tail bead (C4h / D, the double bond)
+INK     = "#1a1a1a"
+MUTE    = "#6b6b6b"
+FAINT   = "#9a9a9a"
 
 HEADNAME  = {"POPC": "choline", "POPE": "ethanolamine", "POPG": "glycerol"}
 HEADBEAD  = {"POPC": ("NC3", +1), "POPE": ("NH3", +1), "POPG": ("GL0", 0)}
@@ -38,31 +42,27 @@ def draw_aa(ax, lip):
             idx.append(k)
         return idx
 
-    # two tails: A = sn-2 oleoyl 18:1 (kink, orange beads), B = sn-1 palmitoyl 16:0 (saturated)
-    tA = tail(-0.5, 15, 4.35, unsat=(7, 8))
-    tB = tail(0.5, 14, 4.35)
+    tA = tail(-0.5, 15, 4.35, unsat=(7, 8))   # sn-2 oleoyl 18:1 (kink, orange beads)
+    tB = tail(0.5, 14, 4.35)                   # sn-1 palmitoyl 16:0 (saturated)
 
-    # glycerol + ester carbonyls (green)
     gC = add(0.0, 4.95, C_GLY)
     gA = add(-0.5, 4.72, C_GLY)
     gB = add(0.5, 4.72, C_GLY)
     link(gC, gA); link(gC, gB); link(gA, tA[0]); link(gB, tB[0])
 
-    # phosphate (red): P and two O
     p = add(0.0, 5.55, C_NEG)
     link(gC, p)
     link(p, add(-0.24, 5.78, C_NEG))
     link(p, add(0.24, 5.78, C_NEG))
 
-    # head
     if lip in ("POPE", "POPC"):
         hc = C_POS
         c1 = add(0.0, 6.15, hc); c2 = add(0.0, 6.55, hc); n = add(0.0, 7.00, hc)
         link(p, c1); link(c1, c2); link(c2, n)
-        if lip == "POPC":                       # choline trimethyl
+        if lip == "POPC":
             for dx in (-0.30, 0.30, 0.0):
                 link(n, add(dx, 7.28, hc))
-    else:                                        # POPG neutral glycerol head (purple)
+    else:
         hc = C_NEUT
         c1 = add(0.0, 6.15, hc)
         c2 = add(-0.26, 6.55, hc); c3 = add(0.26, 6.55, hc)
@@ -107,104 +107,114 @@ def draw_cg(ax, lip):
         ax.text(x, y, label, ha="center", va="center", fontsize=6.3,
                 color="white", fontweight="bold", zorder=3)
         if q > 0:
-            ax.text(x+0.34, y+0.3, "+", ha="center", va="center", fontsize=12,
+            ax.text(x+0.33, y+0.31, "+", ha="center", va="center", fontsize=11,
                     color=C_POS, fontweight="bold", zorder=4)
         elif q < 0:
-            ax.text(x+0.34, y+0.3, "−", ha="center", va="center", fontsize=12,
+            ax.text(x+0.33, y+0.31, "−", ha="center", va="center", fontsize=11,
                     color=C_NEG, fontweight="bold", zorder=4)
-    ax.set_xlim(-1.2, 1.2); ax.set_ylim(0.0, 6.7)
+    ax.set_xlim(-1.25, 1.25); ax.set_ylim(0.1, 6.7)
     ax.set_aspect("equal"); ax.axis("off")
 
 # ---- figure ---------------------------------------------------------------------------
 plt.rcParams["font.family"] = "DejaVu Sans"
-fig = plt.figure(figsize=(13.6, 11.8))
+fig = plt.figure(figsize=(13.2, 10.6))
 fig.patch.set_facecolor("white")
+LX = 0.055            # common left margin
+RX = 0.945            # common right margin
 
-fig.text(0.5, 0.977, "Membranes: lipids, coarse-graining and charge",
-         ha="center", fontsize=18, fontweight="bold", color="#1a1a1a")
-fig.text(0.5, 0.957,
+def rule(y, x0=LX, x1=RX, c="#e4e4df", lw=1.1):
+    fig.add_artist(Line2D([x0, x1], [y, y], color=c, lw=lw, transform=fig.transFigure))
+
+def section(y, label, note):
+    fig.text(LX, y, label, fontsize=12.5, fontweight="bold", color=INK)
+    fig.text(LX + 0.115, y, note, fontsize=10.5, color=MUTE, va="baseline")
+    rule(y - 0.013)
+
+# title block
+fig.text(LX, 0.968, "Membranes: lipids, coarse-graining and charge",
+         fontsize=18, fontweight="bold", color=INK)
+fig.text(LX, 0.944,
          "Martini 3, non-polarisable water. The three lipids share tails, glycerol and phosphate; "
-         "only the first head bead differs, and that sets the charge.",
-         ha="center", fontsize=10.5, color="#555555")
+         "only the first head bead differs, and that is what sets the charge.",
+         fontsize=10.5, color=MUTE)
+
+# ---- section A: lipids -----------------------------------------------------------------
+section(0.905, "Lipids", "all-atom (left) and Martini 3 coarse-grained (right), in shared colours")
 
 lipids = ["POPE", "POPG", "POPC"]
-left, colw, gap = 0.050, 0.308, 0.006
-y_panel, h_panel, w_aa = 0.515, 0.370, 0.150
-
+colw, cgap = 0.287, 0.018
+y_panel, h_panel, w_aa, inner = 0.470, 0.370, 0.148, 0.006
 for k, lip in enumerate(lipids):
-    x0 = left + k * (colw + gap)
-    anion = " (anionic, net −1)" if NETCHARGE[lip] < 0 else " (zwitterionic, net 0)"
-    fig.text(x0 + colw/2, 0.920, lip + anion, ha="center", fontsize=13, fontweight="bold",
-             color=("#C44E52" if NETCHARGE[lip] < 0 else "#333333"))
+    x0 = LX + k * (colw + cgap)
+    xc = x0 + colw / 2.0
+    net = NETCHARGE[lip]
+    fig.text(xc, 0.864, lip, ha="center", fontsize=14.5, fontweight="bold", color=INK)
+    fig.text(xc, 0.846, ("anionic  ·  net −1" if net < 0 else "zwitterionic  ·  net 0"),
+             ha="center", fontsize=9.5, color=(C_NEG if net < 0 else "#5a6472"), fontweight="bold")
 
     ax_aa = fig.add_axes([x0, y_panel, w_aa, h_panel])
     draw_aa(ax_aa, lip)
-    fig.text(x0 + w_aa/2, 0.897, "all-atom", ha="center", fontsize=8.5, color="#999999")
-
-    x_cg = x0 + w_aa + 0.012
-    w_cg = colw - w_aa - 0.012
+    x_cg = x0 + w_aa + inner
+    w_cg = colw - w_aa - inner
     ax_cg = fig.add_axes([x_cg, y_panel, w_cg, h_panel])
     draw_cg(ax_cg, lip)
-    fig.text(x_cg + w_cg/2, 0.897, "Martini 3 CG, 12 beads", ha="center",
-             fontsize=8.5, color="#999999")
 
     hb, hq = HEADBEAD[lip]
-    fig.text(x0 + colw/2, 0.497,
-             "head: %s  →  %s(%s) + PO4(−1)" %
+    fig.text(xc, 0.450,
+             "%s  →  %s (%s),  PO4 (−1)" %
              (HEADNAME[lip], hb, ("+1" if hq > 0 else "0")),
-             ha="center", fontsize=9, color="#444444")
+             ha="center", fontsize=9.5, color="#555")
 
-# bead legend
-lx, ly = 0.050, 0.440
-fig.text(lx, ly + 0.022, "Shared colours (atoms and beads)", fontsize=10.5,
-         fontweight="bold", color="#1a1a1a")
-items = [("cationic head (+1)", C_POS), ("neutral head (0)", C_NEUT),
-         ("phosphate (−1)", C_NEG), ("glycerol / ester", C_GLY),
-         ("saturated tail", C_SAT), ("unsaturated tail (double bond)", C_UNSAT)]
+# colour key (single aligned row)
+rule(0.420)
+fig.text(LX, 0.400, "Colours", fontsize=10.5, fontweight="bold", color=INK)
+items = [("cationic head +1", C_POS), ("neutral head 0", C_NEUT), ("phosphate −1", C_NEG),
+         ("glycerol / ester", C_GLY), ("saturated tail", C_SAT), ("double-bond tail", C_UNSAT)]
+kx = LX + 0.085
 for i, (lab, col) in enumerate(items):
-    xx = lx + (i % 3) * 0.235
-    yy = ly - (i // 3) * 0.024
-    fig.patches.append(Circle((xx, yy), 0.007, transform=fig.transFigure,
+    xx = kx + i * 0.147
+    fig.patches.append(Circle((xx, 0.4005), 0.0066, transform=fig.transFigure,
                              facecolor=col, edgecolor="#3a3a3a", lw=0.6))
-    fig.text(xx + 0.014, yy, lab, va="center", fontsize=9, color="#444444")
+    fig.text(xx + 0.013, 0.400, lab, va="center", fontsize=9, color="#444")
 
-# ---- membranes panel ------------------------------------------------------------------
-def membrane_panel(ax, title, subtitle, lines, charge_lines, charge_colour):
+# ---- section B: membranes --------------------------------------------------------------
+section(0.360, "Membranes", "composition and charge balance")
+
+def membrane_panel(ax, title, subtitle, lines, charge_lines, accent):
     ax.axis("off")
-    ax.add_patch(FancyBboxPatch((0.01, 0.01), 0.98, 0.98,
-                 boxstyle="round,pad=0.01,rounding_size=0.03",
-                 facecolor="#fbfbfa", edgecolor="#d9d9d4", lw=1.2, transform=ax.transAxes))
-    ax.text(0.05, 0.915, title, fontsize=12.5, fontweight="bold",
-            transform=ax.transAxes, color="#1a1a1a")
-    ax.text(0.05, 0.845, subtitle, fontsize=9, transform=ax.transAxes, color="#777")
-    y = 0.72
+    ax.add_patch(FancyBboxPatch((0.012, 0.012), 0.976, 0.976,
+                 boxstyle="round,pad=0.008,rounding_size=0.025",
+                 facecolor="#fbfbfa", edgecolor="#dedeea", lw=1.1, transform=ax.transAxes))
+    ax.add_patch(FancyBboxPatch((0.012, 0.012), 0.012, 0.976,
+                 boxstyle="square,pad=0", facecolor=accent, edgecolor="none",
+                 transform=ax.transAxes))
+    ax.text(0.055, 0.90, title, fontsize=12.5, fontweight="bold", transform=ax.transAxes, color=INK)
+    ax.text(0.055, 0.815, subtitle, fontsize=9, transform=ax.transAxes, color=MUTE)
+    y = 0.685
     for lab, val in lines:
-        ax.text(0.07, y, lab, fontsize=10, transform=ax.transAxes, color="#444")
-        ax.text(0.93, y, val, fontsize=10, transform=ax.transAxes, color="#222",
+        ax.text(0.075, y, lab, fontsize=10, transform=ax.transAxes, color="#444")
+        ax.text(0.925, y, val, fontsize=10, transform=ax.transAxes, color="#222",
                 ha="right", fontfamily="DejaVu Sans Mono")
-        y -= 0.10
-    y -= 0.035
+        y -= 0.105
+    y -= 0.03
     for cl in charge_lines:
-        ax.text(0.05, y, cl, fontsize=9.5, transform=ax.transAxes,
-                color=charge_colour, fontweight="bold")
-        y -= 0.082
+        ax.text(0.055, y, cl, fontsize=9.5, transform=ax.transAxes, color=accent, fontweight="bold")
+        y -= 0.085
 
-fig.text(0.5, 0.380, "The two membranes: composition and charge balance",
-         ha="center", fontsize=14, fontweight="bold", color="#1a1a1a")
-
-axb = fig.add_axes([0.050, 0.048, 0.44, 0.312])
+pw, pgap = (RX - LX - 0.03) / 2.0, 0.03
+axb = fig.add_axes([LX, 0.050, pw, 0.295])
 membrane_panel(
-    axb, "Bacterial target  —  POPE:POPG 3:1",
+    axb, "Bacterial target — POPE:POPG 3:1",
     "Gram-negative inner-membrane mimic. 198 lipids, ~5285 beads, 0.15 M NaCl.",
     [("POPE (zwitterionic)", "140"), ("POPG (anionic, −1 each)", "58"),
      ("W  (Martini water)", "2847"), ("Na⁺  /  Cl⁻", "60 / 2")],
     ["Membrane charge −58 e  (58 × POPG).",
      "Excess Na⁺ neutralises it → system neutral.",
-     "Anionic surface."], "#C44E52")
+     "Anionic surface."], C_NEG)
 
-axh = fig.add_axes([0.515, 0.048, 0.44, 0.312])
+axh = fig.add_axes([LX + pw + pgap, 0.050, pw, 0.295])
 membrane_panel(
-    axh, "Host  —  POPC (neutral)",
+    axh, "Host — POPC (neutral)",
     "Mammalian-membrane mimic. Cholesterol and sphingomyelin deferred.",
     [("POPC (zwitterionic)", "194"), ("W  (Martini water)", "~2716"),
      ("Na⁺  /  Cl⁻", "equal (salt only)")],
@@ -212,10 +222,10 @@ membrane_panel(
      "Na⁺ = Cl⁻ : the 0.15 M salt only.",
      "Neutral surface."], "#2E6FAE")
 
-fig.text(0.5, 0.028,
+fig.text(0.5, 0.022,
          "Selectivity contrast: the anionic bacterial surface (POPG) versus the neutral host (POPC) "
          "is what a cationic antimicrobial peptide discriminates on.",
-         ha="center", fontsize=10, color="#555555", style="italic")
+         ha="center", fontsize=9.5, color=MUTE, style="italic")
 
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "membranes.png")
 fig.savefig(out, dpi=200, facecolor="white")

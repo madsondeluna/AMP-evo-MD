@@ -140,9 +140,13 @@ with the Martini 3 coarse-grained force field and non-polarisable water. POPG ma
 anionic, which is the property antimicrobial peptides discriminate on. Cardiolipin (CDL2) belongs
 in a faithful inner-membrane mimic and is what makes it most strongly anionic, but its Martini 3
 parameters are not shipped here, so the first campaigns run on POPE:POPG and add cardiolipin once
-its parameters are in place. The host mimic, used only by the binding objective's selectivity
-term, needs cholesterol and sphingomyelin for the same reason and is deferred on the same grounds
-rather than approximated by a neutral bilayer.
+its parameters are in place. The host is a mammalian-membrane mimic, used by the binding
+objective's selectivity term and by the damage objective's host penalty: here it is a pure POPC
+bilayer, zwitterionic and neutral, the common minimal Martini proxy for a mammalian membrane,
+built the same way in the same 8 x 8 nm box. The first-order selectivity signal is the charge
+contrast between the anionic bacterial target and the neutral host, which POPE:POPG against POPC
+already captures; cholesterol and sphingomyelin add realism (rigidity, resistance to lysis) and
+are deferred with their Martini 3 parameters.
 
 Size, as built:
 
@@ -183,7 +187,7 @@ left the interface rather than scaling its score.
 
 | | van Hilten 2023 (source) | Biriukov and Vacha 2026 (Evo-MD-FE) | this fork (AMP-evo-MD) |
 |---|---|---|---|
-| membrane | POPC, single component | POPE:POPG 3:1 | POPE:POPG 3:1 (host mimic deferred) |
+| membrane | POPC, single component | POPE:POPG 3:1 | POPE:POPG 3:1 target, POPC host |
 | force field | Martini 3 | Martini 2.2, polarisable water | Martini 3, non-polarisable water |
 | geometry | flat bilayer, two tension states | lipid stripe with a pore rim | flat bilayer, constant area |
 | observable | curvature-sensing free energy | pore line tension, umbrella sampling | induced leaflet strain, or partitioning selectivity |
@@ -677,24 +681,22 @@ Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMe
 deliberate: a plausible placeholder would propagate into every fitness value in the campaign
 while looking entirely reasonable.
 
-**Three of the lipids in the compositions below are not parameterised in the force field files
-shipped here.** The Martini 3 set in `user/base/` covers the phospholipids, the ions and the
-solvents; it defines neither cardiolipin (`CDL0`, `CDL1`, `CDL2`), nor sphingomyelin (`DPSM`),
-nor cholesterol (`CHOL`). As written, neither the bacterial nor the host membrane can be built
-without adding the parameter files that define them, which Martini distributes separately from
-the main lipid set. `tools/membrane.py plan` checks this and stops with the list, before
-`insane` builds a structure that `grompp` would then refuse.
-
-Two ways forward, and the choice is a scientific one rather than a packaging one. Add the
-missing parameter files, which keeps the compositions as designed: cardiolipin is what makes a
-Gram-negative inner membrane mimic anionic in the way that matters, and cholesterol is the main
-determinant of a host membrane's resistance to lysis, so dropping either changes what the
-calibration means. Or build from the lipids that are defined and say so, accepting that the host
-membrane becomes a generic neutral bilayer rather than a hemolysis proxy.
+**Both reference membranes build entirely from the Martini 3 lipids shipped in `user/base/`**,
+which cover the phospholipids, the ions and the solvents. The bacterial target is POPE:POPG 3:1
+and the host is pure POPC; neither needs anything added. Two lipids that would add realism are
+deferred because their Martini 3 parameters are distributed separately: cardiolipin (`CDL0`,
+`CDL1`, `CDL2`), which makes a Gram-negative inner membrane more strongly anionic, and cholesterol
+(`CHOL`) with sphingomyelin (`DPSM`), which stiffen a mammalian host and raise its resistance to
+lysis. The simplification is deliberate: the first-order selectivity signal is the charge contrast
+between the anionic bacterial target and the neutral host, which POPE:POPG against POPC already
+captures. `tools/membrane.py plan` checks that every lipid in a composition is parameterised and
+stops with the list before `insane` builds a structure that `grompp` would refuse, so adding
+cardiolipin or cholesterol later is a matter of dropping in their parameter files and changing the
+composition string.
 
 ```bash
 # First pass. Prints the plan and the insane command, then stops.
-./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
 Read the plan it prints. It reports the lipid counts, the water count, the box dimensions, and
@@ -706,7 +708,7 @@ the surface tension refuses to reach zero.
 Once the plan looks right:
 
 ```bash
-AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
 This builds, minimises, and equilibrates at zero tension under a semi-isotropic barostat, then
@@ -714,13 +716,13 @@ measures the equilibrium area per lipid and prints a second plan with corrected 
 Rebuild with those counts, re-equilibrate, and then run the production reference:
 
 ```bash
-PASS=2 AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+PASS=2 AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
 Repeat the whole sequence for the host membrane:
 
 ```bash
-./tools/protocol.sh host "POPC:60,DPSM:10,CHOL:30" host
+./tools/protocol.sh host "POPC:100" host
 ```
 
 Why two passes. The production runs use a constant-area ensemble, so the box must sit at the
@@ -730,15 +732,17 @@ equilibrating, so the lipid count is corrected on a second pass while the box st
 need comparable areas: `delta_gamma` is a per-unit-area quantity, and a large area mismatch
 would dilute the per-peptide perturbation differently in each membrane.
 
-Cholesterol is the composition where the first pass will be furthest off. Sterols condense their
-neighbours, so a linear sum over the seed area-per-lipid values underestimates the real packing.
-Expect to need the second pass more than for the bacterial membrane.
+Both reference compositions here, POPE:POPG and pure POPC, pack close to their seed
+area-per-lipid, so the second pass is a modest correction. A composition with cholesterol would
+need it more, because sterols condense their neighbours and a linear sum over the seed values
+underestimates the real packing; worth remembering when cholesterol or cardiolipin are added
+later.
 
 Useful overrides:
 
 ```bash
 BOX=8.0 MAX_RESIDUES=30 SALT=0.15 EQUIL_NS=500 PROD_NS=400 \
-    AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
+    AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
 Check the result before trusting it:

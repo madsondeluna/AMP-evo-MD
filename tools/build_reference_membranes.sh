@@ -45,7 +45,10 @@ run_one() {
 # is deferred until its Martini 3 parameters are added; see the README for why that matters.
 run_one bacterial "POPE:70,POPG:30" target
 
-# host: a mammalian-membrane mimic for the binding objective's selectivity term. A faithful host
-# needs cholesterol and sphingomyelin, whose Martini 3 parameters are not shipped here, so it is
-# left commented until they are added rather than built as a misleading neutral POPC bilayer.
+# host: a mammalian-membrane mimic for the binding objective's selectivity term and the damage
+# objective's host penalty. It is a pure POPC bilayer, zwitterionic and neutral, the common minimal
+# Martini proxy for a mammalian membrane; it builds with the shipped Martini 3 lipids, no extra
+# parameters. Cholesterol and sphingomyelin would add realism (rigidity, resistance to lysis) and
+# are deferred with their parameters. The first campaigns focus on the bacterial target, so the
+# host is left as an opt-in: uncomment the line below to build it alongside the target.
 # run_one host "POPC:100" host

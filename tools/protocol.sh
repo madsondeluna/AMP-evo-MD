@@ -2,8 +2,8 @@
 #
 # Membrane preparation protocol, end to end.
 #
-#   tools/protocol.sh bacterial "POPE:70,POPG:20,CDL2:10" target
-#   tools/protocol.sh host      "POPC:60,DPSM:10,CHOL:30" host
+#   tools/protocol.sh bacterial "POPE:70,POPG:30" target
+#   tools/protocol.sh host      "POPC:100" host
 #
 # Runs: build -> minimise -> equilibrate at zero tension -> re-plan the lipid count ->
 # rebuild -> production at constant area -> extract -> analyse -> emit the MembraneDef.

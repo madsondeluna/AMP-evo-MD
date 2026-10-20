@@ -56,7 +56,7 @@ axA.text(0.06, 0.475, "a .tpr keeps the bonds, so beads\nare drawn connected",
 axA.text(0.06, 0.30, "trajectory", fontsize=10.5, fontweight="bold", color="#333", transform=axA.transAxes)
 axA.text(0.06, 0.225, "equil.xtc  (optional)", fontsize=10, color="#222",
          family="DejaVu Sans Mono", transform=axA.transAxes)
-axA.text(0.06, 0.145, "only to watch motion over time;\nwrite it with WRITE_XTC = True",
+axA.text(0.06, 0.145, "the movie over time; candidates\nneed WRITE_XTC = True",
          fontsize=8.8, color=MUTE, transform=axA.transAxes, va="top")
 
 # panel B: what it does
@@ -68,11 +68,11 @@ for t, c in cmd:
     axB.text(0.055, yy, t, fontsize=9.5, color=c, family="DejaVu Sans Mono", transform=axB.transAxes)
     yy -= 0.072
 notes = [
-    "detects lipids / water / ions /",
-    "peptide by residue name",
+    "one representation per lipid type,",
+    "plus peptide, ions and water",
     "AOChalky matte + ambient occlusion",
-    "draws the periodic box (pbctools)",
-    "VIEW_HIDE_WATER=1 drops the water",
+    "trajectory centred and smoothed (5)",
+    "VIEW_HIDE_WATER=1 · VIEW_SHOW_BOX=1",
 ]
 yy = 0.44
 for n in notes:
@@ -82,7 +82,7 @@ for n in notes:
 # panel C: what you see
 axC = panel(pC, "3 · WHAT YOU SEE", "Representations", "#9a3b8f")
 rows = [
-    (C_LIP, "Lipids", "beads, coloured by residue"),
+    (C_LIP, "Lipids", "one rep per type, by colour"),
     (C_PEP, "Peptide", "yellow, slightly larger"),
     (C_ION, "Ions", "small beads, by name"),
     (C_WAT, "Water", "transparent QuickSurf slab"),

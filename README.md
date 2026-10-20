@@ -1190,16 +1190,19 @@ finishes this week, and a mean hides exactly that.
 
 `tools/vmd_view.sh` opens a membrane, or a peptide in a membrane, in VMD with Martini-friendly
 representations. It takes a **structure** and an **optional trajectory**, works out what each
-residue is (lipid, water, ion, or peptide) from its name, and builds one representation per class,
-so the same command works on a bare bilayer and on a candidate run without any editing.
+residue is (lipid, water, ion, or peptide) from its name, and builds a separate representation for
+each lipid type present plus one each for the peptide, the ions and the water, so every component
+is individually toggleable and the same command works on a bare bilayer and on a candidate run.
 
 ![How tools/vmd_view.sh is used and what it draws](docs/vmd_view.png)
 
-**What it draws.** Lipids as beads coloured by residue (so POPE and POPG are told apart), the
-peptide in yellow and slightly larger, ions as small beads, and water as a transparent QuickSurf
-surface (the Martini-tutorial look), with the periodic box outlined, all in a chalky matte style
-(VMD's `AOChalky` material with ambient occlusion, orthographic projection). Set
-`VIEW_HIDE_WATER=1` to drop the water surface.
+**What it draws.** One representation per lipid type present, each in a flat colour of its own so
+the types are visually separate and can be toggled independently in `Graphics > Representations`;
+the peptide in yellow and slightly larger; ions as small beads coloured by name; and water as a
+transparent QuickSurf surface (the Martini-tutorial look), all in a chalky matte style (VMD's
+`AOChalky` material with ambient occlusion, orthographic projection). Set `VIEW_HIDE_WATER=1` to
+drop the water surface. The periodic box outline is not drawn by default; set `VIEW_SHOW_BOX=1` to
+draw it.
 
 **Try it now.** The equilibrated bacterial reference membrane is committed, so this runs straight
 after a clone or pull, with nothing to build first:
@@ -1211,11 +1214,15 @@ tools/vmd_view.sh user/base/insert_peptide/membrane_bacterial.gro      # the com
 Other inputs, once you have run the pipeline:
 
 ```bash
-tools/vmd_view.sh prep/bacterial/equil.gro                             # a membrane you just built
-tools/vmd_view.sh prep/bacterial/min.tpr prep/bacterial/equil.xtc      # the membrane, with its trajectory
+tools/vmd_view.sh prep/bacterial/equil.gro                             # a membrane you just built (one frame)
+tools/vmd_view.sh prep/bacterial/equil.tpr prep/bacterial/equil.xtc    # the movie: structure + trajectory
 tools/vmd_view.sh output/<SEQ>/production_bacterial.tpr \
                   output/<SEQ>/production_bacterial.xtc                 # a candidate: peptide in the membrane
 ```
+
+To watch the equilibration as a movie rather than a single frame, pass the `.tpr` (which carries
+the bonds, so the beads stay connected) together with its `.xtc`. The equilibration recipe writes
+one frame every 50 000 steps, so a 500 ns run gives a few hundred frames to scrub through.
 
 Prefer the `.tpr` over the `.gro` as the structure: it carries the bonds, so the beads are drawn
 connected rather than loose (a `.gro` has no connectivity, which is still perfectly readable for a

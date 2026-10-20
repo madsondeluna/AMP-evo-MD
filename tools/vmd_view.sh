@@ -47,6 +47,24 @@ command -v "${VMD_BIN}" >/dev/null 2>&1 || {
 [ -f "${STRUCT}" ] || { echo "structure not found: ${STRUCT}" >&2; exit 1; }
 [ -z "${TRAJ}" ] || [ -f "${TRAJ}" ] || { echo "trajectory not found: ${TRAJ}" >&2; exit 1; }
 
+# VMD reads coordinate files (.gro, .pdb, ...), not GROMACS run inputs. A .tpr/.top passed as the
+# structure makes VMD load no topology and then segfault once a selection or representation runs, so
+# swap in the sibling .gro of the same basename if there is one (the .tpr is still picked up as the
+# bond source below), or stop with a clear message.
+case "${STRUCT}" in
+    *.tpr|*.top|*.itp|*.ndx|*.mdp|*.edr|*.log|*.cpt)
+        _alt="${STRUCT%.*}.gro"
+        if [ -f "${_alt}" ]; then
+            echo "note: VMD cannot open .${STRUCT##*.} as a structure; using ${_alt} instead." >&2
+            STRUCT="${_alt}"
+        else
+            echo "error: VMD cannot open a .${STRUCT##*.} as a structure. Pass the coordinate file:" >&2
+            echo "       tools/vmd_view.sh ${STRUCT%.*}.gro ${TRAJ:+$TRAJ}" >&2
+            exit 1
+        fi
+        ;;
+esac
+
 # The structure and trajectory are passed through the environment so the TCL can load them with
 # mol new / mol addfile, which puts the trajectory into the same molecule as the structure. That
 # is more reliable than listing both on the vmd command line, where the trajectory can land in a

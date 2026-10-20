@@ -19,8 +19,9 @@
 # steps documented in the README, "Step 1: prepare and calibrate the membranes".
 #
 # Usage:
-#   tools/build_reference_membranes.sh          # build every reference membrane below
-#   NT=10 tools/build_reference_membranes.sh    # cap the GROMACS thread count
+#   tools/build_reference_membranes.sh                 # build every reference membrane (the full set)
+#   tools/build_reference_membranes.sh bacterial       # build only the named membrane(s)
+#   NT=10 tools/build_reference_membranes.sh           # cap the GROMACS thread count
 #
 set -euo pipefail
 
@@ -33,9 +34,18 @@ export SALT="${SALT:-0.15}"         # mol/L, physiological, on top of neutralisi
 export EQUIL_NS="${EQUIL_NS:-500}"  # zero-tension equilibration length, the reference standard
 export AUTO=1                       # run the steps, do not stop after printing the plan
 
+# Which membranes to build: with no arguments, all of them (the full reproduction of the committed
+# reference set); name one or more to build just those.
+WANT=("$@")
+
 # name | composition | role. One row per reference membrane.
 run_one() {
     local name="$1" composition="$2" role="$3"
+    if [ "${#WANT[@]}" -gt 0 ]; then
+        local requested=0 w
+        for w in "${WANT[@]}"; do [ "${w}" = "${name}" ] && requested=1; done
+        [ "${requested}" -eq 1 ] || return 0
+    fi
     echo "=== reference membrane: ${name}  (${composition}, role ${role}) ==="
     "${HERE}/tools/protocol.sh" "${name}" "${composition}" "${role}"
 }
@@ -49,6 +59,6 @@ run_one bacterial "POPE:70,POPG:30" target
 # objective's host penalty. It is a pure POPC bilayer, zwitterionic and neutral, the common minimal
 # Martini proxy for a mammalian membrane; it builds with the shipped Martini 3 lipids, no extra
 # parameters. Cholesterol and sphingomyelin would add realism (rigidity, resistance to lysis) and
-# are deferred with their parameters. The first campaigns focus on the bacterial target, so the
-# host is left as an opt-in: uncomment the line below to build it alongside the target.
-# run_one host "POPC:100" host
+# are deferred with their parameters. It is part of the committed reference set and built by
+# default; pass 'bacterial' on the command line to build only the target.
+run_one host "POPC:100" host

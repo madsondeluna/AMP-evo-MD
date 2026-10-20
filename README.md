@@ -183,6 +183,23 @@ no new simulation.
 proxies for the binding objective; the orientation factor gates both, rejecting a candidate that
 left the interface rather than scaling its score.
 
+### The same peptide on both membranes
+
+The same peptide is simulated on both membranes. For each candidate the peptide is built once,
+then inserted into the bacterial target and into the host and run through its own production, so
+every observable above exists once per membrane: `delta_gamma` on the target and on the host, the
+interaction energy on each, and so on. The objective then combines the two into a single fitness.
+Damage maximises the target's `delta_gamma` while a hinge penalty holds down any `delta_gamma` on
+the host; binding maximises the target-minus-host difference of the partitioning proxy. Both are
+selectivity statements: a useful antimicrobial should damage or bind the bacterial membrane and
+spare the mammalian one.
+
+How many production runs a candidate costs follows from this. With both membranes registered it is
+two, one per membrane. The cheapest damage run registers only the bacterial target and sets the
+host penalty to zero, so a candidate is a single production run; that is the learning-scale
+configuration in [Resource planning](#resource-planning). The host is added back the moment
+selectivity matters, as the damage host penalty or as the full binding objective.
+
 ### How it compares to the source papers
 
 | | van Hilten 2023 (source) | Biriukov and Vacha 2026 (Evo-MD-FE) | this fork (AMP-evo-MD) |
@@ -774,19 +791,22 @@ python -c "import user.membranes as m; m.require_all_calibrated(); print('membra
 
 ### The equilibrated membrane is a committed standard
 
-The equilibrated membrane is produced once, at zero tension for a pinned length, and the
-structure is committed to the repository, so every machine starts from the identical membrane
+The equilibrated membranes are produced once, at zero tension for a pinned length, and the
+structures are committed to the repository, so every machine starts from the identical membranes
 instead of re-equilibrating. The recipe is versioned in `tools/build_reference_membranes.sh`,
-which pins the composition, box, salt and the equilibration length. **The standard equilibration
-is 500 ns** (the `protocol.sh` default of 200 ns is a floor for exploratory builds).
+which pins each composition, the box, the salt and the equilibration length, and builds both
+reference membranes (the POPE:POPG bacterial target and the POPC host) by default; name one to
+build just it. **The standard equilibration is 500 ns** (the `protocol.sh` default of 200 ns is a
+floor for exploratory builds).
 
 ```bash
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
 
 # In tmux or screen if either is installed (reattachable). Otherwise nohup, which still survives a
-# dropped connection but cannot be reattached. EQUIL_NS=500 is pinned inside the recipe.
-nohup tools/build_reference_membranes.sh > ~/equil500.log 2>&1 &
+# dropped connection but cannot be reattached. EQUIL_NS=500 is pinned inside the recipe. Name
+# 'bacterial' to build only the target; drop the name to build the host as well.
+nohup tools/build_reference_membranes.sh bacterial > ~/equil500.log 2>&1 &
 tail -f ~/equil500.log      # Ctrl-c stops watching, not the run
 ```
 
@@ -803,6 +823,9 @@ commit them, so the membrane travels with the code:
 ```bash
 cp prep/bacterial/equil.gro     user/base/insert_peptide/membrane_bacterial.gro
 cp prep/bacterial/bacterial.top user/base/insert_peptide/membrane_bacterial.top
+# and, when the host is built, the same for it:
+cp prep/host/equil.gro          user/base/insert_peptide/membrane_host.gro
+cp prep/host/host.top           user/base/insert_peptide/membrane_host.top
 ```
 
 Two senses of reproducibility, both covered. The committed `.gro` gives the **same structure** on

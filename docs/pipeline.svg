@@ -70,7 +70,8 @@
   <!-- second pass loop -->
   <path d="M 398 218.0 L 398 244.0 L 100 244.0 L 100 218.0" stroke="#D55E00" stroke-width="1.2" fill="none"
         stroke-dasharray="4 3" marker-end="url(#arrowOrange)"/>
-  <text x="252" y="259.0" font-size="10" fill="#D55E00" text-anchor="middle">second pass: measured area per lipid corrects the lipid count, the box stays at 8.0 x 8.0 nm</text>
+  <text x="44" y="259.0" font-size="10" fill="#D55E00">optional: the zero-tension equilibration leaves the box at the equilibrium area, so production runs on it directly;</text>
+  <text x="44" y="272.0" font-size="10" fill="#D55E00">a second pass to a common 8.0 x 8.0 nm box only area-matches two membranes whose natural areas diverge (e.g. cholesterol).</text>
 
   <text x="44" y="282.0" font-size="10" fill="#6b6b6b">Checks that must pass: surface tension zero within error, area no longer drifting, leaflets symmetric.</text>
 

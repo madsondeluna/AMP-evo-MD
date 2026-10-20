@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # Open a coarse-grained membrane in VMD with Martini-friendly representations, optionally with a
-# peptide and a trajectory. Lipids are drawn as VDW beads coloured by type (sticks are optional, via
-# cg_bonds; see below), the peptide highlighted, water as a transparent surface, and ions small, all
-# in a chalky matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this
-# pipeline's outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup,
-# with this repository's file names.
+# peptide and a trajectory. Lipids are coloured by bead region (tails, glycerol, phosphate and the
+# head, the head split by charge), so the bacterial and host membranes look alike except at the
+# head; the peptide, ions and water each have their own colour, in a muted palette and a chalky
+# matte style (VMD's AOChalky material with ambient occlusion). It is meant to make this pipeline's
+# outputs easy to inspect, in the spirit of the Martini tutorials' visualisation setup.
 #
 # The structure is always a coordinate file VMD can read (.gro); VMD cannot open a .tpr directly.
-# To draw Martini sticks, the bonds are injected from the topology by cg_bonds-v5.tcl (see below).
+# Martini sticks come from cg_bonds, which is bundled in tools/vmd and injects the bonds (see below).
 #
 # Usage:
 #   tools/vmd_view.sh prep/bacterial/equil.gro                                   # bonds from equil.tpr beside it
@@ -18,18 +18,17 @@
 #                     output/<SEQ>/production_bacterial.xtc                      # a candidate: peptide in a membrane
 #
 # Notes:
-#   - Martini bonds. VMD draws no bonds for a coarse-grained .gro, so the lipids look like beads
-#     until cg_bonds-v5.tcl adds the bonds from the topology. Make it available with
-#     CG_BONDS=/path/to/cg_bonds-v5.tcl, or drop it in tools/vmd/. The bonds are read from a .tpr
-#     (via gmx dump, most reliable) or a .top, auto-detected beside the structure, or VIEW_BONDS=...
-#     Without it the lipids fall back to beads, which is still perfectly readable for a membrane.
+#   - Martini bonds / sticks. VMD draws no bonds for a coarse-grained .gro. cg_bonds (bundled in
+#     tools/vmd/) injects them from the topology, auto-detected beside the structure: a .tpr (via
+#     gmx dump) or a .top. With bonds the lipids are Licorice sticks; without them they fall back to
+#     VDW beads. Point CG_BONDS=/path or VIEW_BONDS=/path to override, or VIEW_LIPID_REP to force a
+#     style, e.g. VIEW_LIPID_REP="VDW 1.0 20.0".
 #   - To watch the trajectory (the "movie"), pass the .gro and its .xtc, e.g. equil.gro equil.xtc.
 #     The bilayer is kept centred over the run and every representation is smoothed (5-frame window).
-#   - One representation is created per lipid type present, plus peptide, ions and water, each
-#     toggleable in Graphics > Representations.
-#   - Lipids are drawn as VDW beads by default (no external script needed). Sticks need Martini
-#     bonds, which are optional and off unless cg_bonds is set up (see above). Force any style with
-#     VIEW_LIPID_REP, e.g. VIEW_LIPID_REP="Bonds 1.0 12.0".
+#   - Colours use a muted palette (seaborn "deep", matching docs/membranes.png) and are tunable live
+#     via env vars, each a VMD ColorID (0-32): VIEW_TAIL_COLOR, VIEW_HEADCAT_COLOR, VIEW_HEADNEU_COLOR,
+#     VIEW_PO4_COLOR, VIEW_GLYC_COLOR, VIEW_PEPTIDE_COLOR, VIEW_NA_COLOR, VIEW_CL_COLOR, VIEW_WATER_COLOR.
+#   - Every component has its own representation, toggleable in Graphics > Representations.
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
 #   - Set VMD=/path/to/vmd if vmd is not on PATH (for example a module's binary).
@@ -82,8 +81,10 @@ VIEW_TRAJ=""
 # the robust route) or from a .top, auto-detected beside the structure; override with VIEW_BONDS.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CG_BONDS="${CG_BONDS:-}"
-if [ -z "${CG_BONDS}" ] && [ -f "${SCRIPT_DIR}/vmd/cg_bonds-v5.tcl" ]; then
-    CG_BONDS="${SCRIPT_DIR}/vmd/cg_bonds-v5.tcl"
+if [ -z "${CG_BONDS}" ]; then
+    for _cand in "${SCRIPT_DIR}/vmd/cg_bonds.tcl" "${SCRIPT_DIR}/vmd/cg_bonds-v5.tcl"; do
+        [ -f "${_cand}" ] && { CG_BONDS="${_cand}"; break; }
+    done
 fi
 
 VIEW_BONDS="${VIEW_BONDS:-}"
@@ -145,7 +146,7 @@ if {[info exists env(VIEW_CG_BONDS)] && $env(VIEW_CG_BONDS) ne "" && [file exist
         set _gmx $env(VIEW_GMX)
         if {$_gmx eq ""} { set _gmx "gmx" }
         puts "cg_bonds: adding Martini bonds from [file tail $env(VIEW_BONDS_ABS)] (gmx dump)..."
-        if {[catch {cg_bonds -gmx $_gmx -tpr $env(VIEW_BONDS_ABS)} _e]} {
+        if {[catch {cg_bonds -gmx "$_gmx dump" -tpr $env(VIEW_BONDS_ABS)} _e]} {
             puts "cg_bonds (-tpr) failed: $_e"
         }
     } else {
@@ -157,37 +158,65 @@ if {[info exists env(VIEW_CG_BONDS)] && $env(VIEW_CG_BONDS) ne "" && [file exist
 }
 
 # ---------------------------------------------------------------------------
-# Selections and representations. Each lipid type that is present gets its own representation, so it
-# can be toggled on and off and told apart by colour; water, ions and the peptide (protein: anything
-# not matched as lipid, water or ion) each get one too. Matching is by residue name, so this works
-# for any composition and for a membrane with or without a peptide. Unmatched names (special
-# characters like NA+ / CL-) are double-quoted, which VMD's selection parser requires.
+# Selections and representations. Lipids are coloured by bead REGION (head, phosphate, glycerol,
+# tails), not by lipid type, so the bacterial (POPE:POPG) and host (POPC) membranes render
+# identically except at the head bead, where the chemistry and the charge differ. Water, ions and
+# the peptide (anything not matched as lipid, water or ion) each get their own representation.
+# Matching is by residue or bead name; names with special characters (NA+, CL-) are double-quoted,
+# which VMD's selection parser requires.
 # ---------------------------------------------------------------------------
-set lipid_order {POPE POPG POPC POPS CDL0 CDL2 DPSM CHOL}
-array set lipid_color {POPE 23  POPG 32  POPC 6  POPS 29  CDL0 25  CDL2 13  DPSM 19  CHOL 14}
+# Colours are VMD ColorIDs (0-32), each overridable live from the environment, so the scheme is
+# tunable without editing, e.g.:
+#   VIEW_PO4_COLOR=1 VIEW_HEADCAT_COLOR=0 VIEW_NA_COLOR=10 tools/vmd_view.sh membrane.gro
+proc env_or {name default} {
+    if {[info exists ::env($name)] && $::env($name) ne ""} { return $::env($name) }
+    return $default
+}
+# Colour IDs, defaulting to a harmonious muted palette (seaborn "deep", matching docs/membranes.png).
+set c_tail      [env_or VIEW_TAIL_COLOR     2]   ;# lipid tails / body      : grey
+set c_head_cat  [env_or VIEW_HEADCAT_COLOR 23]   ;# cationic head NC3/NH3    : blue
+set c_head_neu  [env_or VIEW_HEADNEU_COLOR 11]   ;# neutral head GL0 (POPG)  : purple
+set c_po4       [env_or VIEW_PO4_COLOR      1]   ;# phosphate PO4            : red
+set c_glyc      [env_or VIEW_GLYC_COLOR     7]   ;# glycerol GL1/GL2         : green
+set pept_color  [env_or VIEW_PEPTIDE_COLOR  3]   ;# peptide                  : orange
+set water_color [env_or VIEW_WATER_COLOR   15]   ;# water surface            : light blue (transparent)
 
-set lipids "resname [join $lipid_order { }]"
+# Recolour each ColorID to the muted palette, but only when the user has not pinned it via its env
+# var (an explicit override is taken as a raw VMD ColorID and left untouched).
+proc harmonise {colorid envname r g b} {
+    if {![info exists ::env($envname)] || $::env($envname) eq ""} {
+        catch {color change rgb $colorid $r $g $b}
+    }
+}
+
+set lipids "resname POPE POPG POPC POPS CDL0 CDL2 DPSM CHOL"
 set water  "resname W WF PW"
 set ions   {resname NA CL ION "NA+" "CL-" SOD CLA}
 set pept   "not ($lipids or $water or $ions)"
 
-# ions split by sign so Na and Cl carry their own colour (names with + / - are double-quoted)
+# ions split by sign so Na and Cl carry their own colour. Defaults are far from the lipid palette
+# and from each other (the earlier red3/orange2 pair read as a single red).
 set ion_cations {resname NA "NA+" SOD ION}
 set ion_anions  {resname CL "CL-" CLA}
-set ion_cation_color 30   ;# Na: red3
-set ion_anion_color  31   ;# Cl: orange2
+set ion_cation_color [env_or VIEW_NA_COLOR 10]   ;# Na : cyan
+set ion_anion_color  [env_or VIEW_CL_COLOR  9]   ;# Cl : pink
+
+# Apply the harmonious palette (seaborn "deep") to the default colour IDs.
+harmonise $c_tail           VIEW_TAIL_COLOR    0.72 0.72 0.72
+harmonise $c_head_cat       VIEW_HEADCAT_COLOR 0.30 0.45 0.69
+harmonise $c_head_neu       VIEW_HEADNEU_COLOR 0.51 0.45 0.70
+harmonise $c_po4            VIEW_PO4_COLOR     0.77 0.31 0.32
+harmonise $c_glyc           VIEW_GLYC_COLOR    0.33 0.66 0.41
+harmonise $pept_color       VIEW_PEPTIDE_COLOR 0.87 0.52 0.32
+harmonise $ion_cation_color VIEW_NA_COLOR      0.39 0.71 0.80
+harmonise $ion_anion_color  VIEW_CL_COLOR      0.85 0.55 0.76
+harmonise $water_color      VIEW_WATER_COLOR   0.65 0.81 0.89
 
 mol delrep 0 top
 
-# Lipid drawing style. Override it with VIEW_LIPID_REP to try others live without editing, e.g.
-#   VIEW_LIPID_REP="Bonds 1.0 12.0"      sticks without end spheres
-#   VIEW_LIPID_REP="CPK 1.0 0.3 12 12"   small balls joined by thin sticks
-#   VIEW_LIPID_REP="VDW 1.0 20.0"        space-filling beads (no sticks)
-#   VIEW_LIPID_REP="Licorice 1.0 12 12"  the default stick look (rounded joints)
-# The default is Licorice, the Martini-tutorial stick look. Licorice, Bonds and CPK all need bonds
-# to draw their sticks: a .tpr carries them from the topology, but a .gro does not (VMD's distance
-# search finds none for coarse-grained beads), so with no explicit override and no bonds the lipids
-# fall back to small VDW beads, which is all a bare .gro can show.
+# Lipid body drawing style. Licorice (sticks) needs the Martini bonds, which cg_bonds adds from the
+# topology when available (it ships in tools/vmd/); without bonds this falls back to VDW beads.
+# Override with VIEW_LIPID_REP, e.g. VIEW_LIPID_REP="VDW 1.0 20.0" or VIEW_LIPID_REP="Bonds 1.0 12".
 set _all [atomselect top all]
 set _nbonds 0
 foreach _bl [$_all getbonds] { incr _nbonds [llength $_bl] }
@@ -195,38 +224,51 @@ $_all delete
 if {[info exists env(VIEW_LIPID_REP)] && $env(VIEW_LIPID_REP) ne ""} {
     set lipid_rep $env(VIEW_LIPID_REP)
 } else {
-    set lipid_rep [expr {$_nbonds > 0 ? "Licorice 1.0 12.0 12.0" : "VDW 1.0 20.0"}]
+    set lipid_rep [expr {$_nbonds > 0 ? "Licorice 0.5 12.0 12.0" : "VDW 0.8 20.0"}]
 }
 
-# one representation per lipid type actually present, each in its own flat colour (unchanged by the
-# stick/bead choice) so the types are visually separate and individually toggleable
-foreach lip $lipid_order {
-    set sel [atomselect top "resname $lip"]
-    set n [$sel num]
-    $sel delete
+# Lipid body as one connected chain in a single colour, so the Licorice bonds draw continuously.
+mol representation $lipid_rep
+mol color ColorID $c_tail
+mol selection $lipids
+mol material AOChalky
+mol addrep top
+
+# Region highlights overlaid as coloured spheres on the head, phosphate and glycerol beads. Each is
+# added only if present, so this adapts to any composition and stays identical across membranes.
+set lipid_marks [list \
+    [list "name NC3 NH3" $c_head_cat 1.1] \
+    [list "name GL0"     $c_head_neu 1.1] \
+    [list "name PO4"     $c_po4      1.0] \
+    [list "name GL1 GL2" $c_glyc     0.9]]
+foreach mark $lipid_marks {
+    set sel "($lipids) and ([lindex $mark 0])"
+    set probe [atomselect top $sel]
+    set n [$probe num]
+    $probe delete
     if {$n == 0} { continue }
-    mol representation $lipid_rep
-    mol color ColorID $lipid_color($lip)
-    mol selection "resname $lip"
+    mol representation VDW [lindex $mark 2] 16.0
+    mol color ColorID [lindex $mark 1]
+    mol selection $sel
     mol material AOChalky
     mol addrep top
 }
 
-# peptide (protein): highlighted in yellow, slightly larger, so it stands out against the bilayer
+# peptide (protein): highlighted, slightly larger, so it stands out against the bilayer
 mol representation VDW 1.1 20.0
-mol color ColorID 4
+mol color ColorID $pept_color
 mol selection $pept
 mol material AOChalky
 mol addrep top
 
 # ions: small beads, Na and Cl each in their own colour
-mol representation VDW 0.6 16.0
+mol representation VDW 0.8 16.0
 mol color ColorID $ion_cation_color
 mol selection $ion_cations
 mol material AOChalky
 mol addrep top
 
-mol representation VDW 0.6 16.0
+mol representation VDW 0.8 16.0
 mol color ColorID $ion_anion_color
 mol selection $ion_anions
 mol material AOChalky
@@ -239,7 +281,7 @@ mol addrep top
 # surface change the QuickSurf grid spacing, the third number. Set VIEW_HIDE_WATER=1 to drop it.
 if {![info exists env(VIEW_HIDE_WATER)] || $env(VIEW_HIDE_WATER) eq ""} {
     mol representation QuickSurf 1.0 0.5 1.0 1.0
-    mol color ColorID 15
+    mol color ColorID $water_color
     mol selection $water
     mol material Transparent
     mol addrep top

@@ -210,7 +210,7 @@ set ion_anion_color  [env_or VIEW_CL_COLOR  9]   ;# Cl : pink
 # Apply the harmonious palette (seaborn "deep") to the default colour IDs.
 harmonise $c_tail           VIEW_TAIL_COLOR    0.72 0.72 0.72
 harmonise $c_head_cat       VIEW_HEADCAT_COLOR 0.30 0.45 0.69
-harmonise $c_head_neu       VIEW_HEADNEU_COLOR 0.51 0.45 0.70
+harmonise $c_head_neu       VIEW_HEADNEU_COLOR 0.48 0.30 0.66
 harmonise $c_po4            VIEW_PO4_COLOR     0.77 0.31 0.32
 harmonise $c_glyc           VIEW_GLYC_COLOR    0.33 0.66 0.41
 harmonise $pept_color       VIEW_PEPTIDE_COLOR 0.87 0.52 0.32

@@ -28,6 +28,12 @@
 #   - Colours use a muted palette (seaborn "deep", matching docs/membranes.png) and are tunable live
 #     via env vars, each a VMD ColorID (0-32): VIEW_TAIL_COLOR, VIEW_HEADCAT_COLOR, VIEW_HEADNEU_COLOR,
 #     VIEW_PO4_COLOR, VIEW_GLYC_COLOR, VIEW_PEPTIDE_COLOR, VIEW_NA_COLOR, VIEW_CL_COLOR, VIEW_WATER_COLOR.
+#   - VIEW_COLOR_BY selects the lipid body scheme: "region" (default) draws every lipid body grey
+#     with the head/phosphate/glycerol marks on top; "charge" additionally tints the neutral (GL0)
+#     lipid, POPG, purple, leaving every other lipid grey. Purple is then the one saturated lipid
+#     colour, so POPG stands out and the bacterial (POPE:POPG) and host (POPC) membranes are
+#     distinguishable side by side, without a blue body competing with the blue water. The region
+#     marks still overlay in both modes.
 #   - Every component has its own representation, toggleable in Graphics > Representations.
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
@@ -227,12 +233,37 @@ if {[info exists env(VIEW_LIPID_REP)] && $env(VIEW_LIPID_REP) ne ""} {
     set lipid_rep [expr {$_nbonds > 0 ? "Licorice 0.5 12.0 12.0" : "VDW 0.8 20.0"}]
 }
 
-# Lipid body as one connected chain in a single colour, so the Licorice bonds draw continuously.
-mol representation $lipid_rep
-mol color ColorID $c_tail
-mol selection $lipids
-mol material AOChalky
-mol addrep top
+# Lipid body. Two schemes, chosen by VIEW_COLOR_BY:
+#   region (default) one grey chain, so the Licorice bonds draw continuously and the coloured
+#                    region marks below carry all the colour.
+#   charge           the neutral (GL0) lipid, POPG, is tinted purple and every other lipid stays
+#                    grey. Whole lipids stay in one representation, so the bonds remain continuous,
+#                    and the region marks still overlay. Purple is the one saturated lipid colour,
+#                    so POPG pops and the bacterial (POPE:POPG) and host (POPC) membranes are told
+#                    apart side by side, with no blue body competing with the blue water.
+set color_by [env_or VIEW_COLOR_BY region]
+if {$color_by eq "charge"} {
+    set neu_body  "($lipids) and (same residue as (name GL0))"
+    set rest_body "($lipids) and not (same residue as (name GL0))"
+    foreach pair [list [list $neu_body $c_head_neu] [list $rest_body $c_tail]] {
+        set sel [lindex $pair 0]
+        set probe [atomselect top $sel]
+        set n [$probe num]
+        $probe delete
+        if {$n == 0} { continue }
+        mol representation $lipid_rep
+        mol color ColorID [lindex $pair 1]
+        mol selection $sel
+        mol material AOChalky
+        mol addrep top
+    }
+} else {
+    mol representation $lipid_rep
+    mol color ColorID $c_tail
+    mol selection $lipids
+    mol material AOChalky
+    mol addrep top
+}
 
 # Region highlights overlaid as coloured spheres on the head, phosphate and glycerol beads. Each is
 # added only if present, so this adapts to any composition and stays identical across membranes.

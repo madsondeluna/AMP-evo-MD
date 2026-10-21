@@ -112,8 +112,11 @@ def analyse_one(name, directory, equil_fraction=None):
     # the number of interfaces. Not bar.
     result["surften"] = {"mean": gamma_mean, "err": gamma_err, "units": "bar*nm"}
     result["surften_drift"] = mdtools.drift(t_eq, gamma_eq)
-    result["time"] = {"start": float(time[0]), "end": float(time[-1]),
-                      "analysed_from": float(t_eq[0])}
+    # Time reported in ns throughout (the .xvg is in ps). The drift above is computed on the raw
+    # ps arrays, but a drift expressed as a percentage over the window is unit-independent, so the
+    # reported and plotted time can be in ns without touching the drift maths.
+    result["time"] = {"start": float(time[0]) / 1000.0, "end": float(time[-1]) / 1000.0,
+                      "analysed_from": float(t_eq[0]) / 1000.0, "units": "ns"}
 
     if area is not None:
         t_eq_a, area_eq = mdtools.tail(time, area, equil_fraction)
@@ -157,7 +160,8 @@ def analyse_one(name, directory, equil_fraction=None):
             # produce. Report the rest rather than aborting the whole analysis.
             result["thickness_nm"] = float("nan")
 
-    result["_series"] = {"time": time, "gamma": gamma,
+    # Series time converted to ns for plotting, so every axis in the figures is in ns.
+    result["_series"] = {"time": time / 1000.0, "gamma": gamma,
                          "area": area if area is not None else None}
     return result
 
@@ -208,7 +212,7 @@ def figure_single(result, outpath):
     ax.plot(s["time"], s["gamma"], color=mdtools.CATEGORICAL[0], lw=0.8)
     ax.axhline(0, color=mdtools.GRID, lw=0.8)
     ax.axvspan(s["time"][0], start, color=mdtools.GRID, alpha=0.3, lw=0)
-    ax.set_ylabel("#Surf*SurfTen (bar nm)")
+    ax.set_ylabel("surface tension (bar nm)")
     ax.set_title("%s: free membrane" % result["name"])
     ax.annotate("discarded", xy=(start, ax.get_ylim()[1]), xytext=(-4, -10),
                 textcoords="offset points", ha="right", fontsize=7,
@@ -219,9 +223,9 @@ def figure_single(result, outpath):
         ax = axes[1]
         ax.plot(s["time"], s["area"], color=mdtools.CATEGORICAL[0], lw=0.8)
         ax.axvspan(s["time"][0], start, color=mdtools.GRID, alpha=0.3, lw=0)
-        ax.set_ylabel("area (nm2)")
+        ax.set_ylabel(r"area (nm$^2$)")
         mdtools.declutter(ax)
-    axes[-1].set_xlabel("time (ps)")
+    axes[-1].set_xlabel("time (ns)")
 
     fig.tight_layout(h_pad=2.0)
     fig.savefig(outpath, bbox_inches="tight")
@@ -248,8 +252,9 @@ def figure_compare(results, outpath):
         ax.plot(s["time"], s["gamma"], color=colour, lw=0.8)
         mdtools.label_last(ax, s["time"], s["gamma"], r["name"], colour)
     ax.axhline(0, color=mdtools.GRID, lw=0.8)
-    ax.set_title("#Surf*SurfTen (bar nm)")
-    ax.set_xlabel("time (ps)")
+    ax.set_title("surface tension (bar nm)")
+    ax.set_xlabel("time (ns)")
+    ax.set_ylabel("surface tension (bar nm)")
     mdtools.declutter(ax)
 
     # Dot with interval, not a bar. The question this panel answers is whether the tension is
@@ -271,7 +276,8 @@ def figure_compare(results, outpath):
     ax.set_yticks(ypos)
     ax.set_yticklabels(names)
     ax.set_ylim(-0.6, len(results) - 0.4)
-    ax.set_title("Equilibrium #Surf*SurfTen (bar nm)")
+    ax.set_title("equilibrium surface tension (bar nm)")
+    ax.set_xlabel("surface tension (bar nm)")
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0)
     span = max(abs(v) + e for v, e in zip(values, errors)) * 2.2
@@ -284,14 +290,22 @@ def figure_compare(results, outpath):
 
     ax = axes[2]
     apl = [r.get("area_per_lipid_nm2", float("nan")) for r in results]
-    ax.bar(names, apl, color=mdtools.CATEGORICAL[:len(results)], width=0.5)
-    ax.set_title("Area per lipid (nm2)")
+    # Lollipop rather than a bar: a stem to a dot carries the same magnitude with far less ink.
+    for i, (v, colour) in enumerate(zip(apl, mdtools.CATEGORICAL[:len(results)])):
+        if np.isfinite(v):
+            ax.plot([i, i], [0, v], color=colour, lw=1.3, solid_capstyle="round", zorder=1)
+            ax.plot([i], [v], "o", color=colour, markersize=7,
+                    markeredgecolor=mdtools.SURFACE, markeredgewidth=1.2, zorder=2)
+            ax.annotate("%.3f" % v, xy=(i, v), xytext=(0, 7), textcoords="offset points",
+                        ha="center", fontsize=8, color=mdtools.INK)
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(names)
+    finite = [v for v in apl if np.isfinite(v)]
+    ax.set_ylim(0, (max(finite) * 1.18) if finite else 1.0)
+    ax.set_xlim(-0.6, len(names) - 0.4)
+    ax.set_title(r"area per lipid (nm$^2$)")
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0, labelleft=False)
-    for i, v in enumerate(apl):
-        if np.isfinite(v):
-            ax.annotate("%.3f" % v, xy=(i, v), xytext=(0, 6), textcoords="offset points",
-                        ha="center", fontsize=8, color=mdtools.INK)
 
     fig.tight_layout(w_pad=3.0)
     fig.savefig(outpath, bbox_inches="tight")

@@ -76,10 +76,15 @@ def pick_series(series, keys):
     return None
 
 
-def analyse_one(name, directory, equil_fraction=None):
+DEFAULT_DRIFT_FRACTION = 0.5
+
+
+def analyse_one(name, directory, equil_fraction=None, drift_fraction=None):
     """Measure one membrane from the files protocol.sh leaves in its directory."""
     if equil_fraction is None:
         equil_fraction = DEFAULT_EQUIL_FRACTION
+    if drift_fraction is None:
+        drift_fraction = DEFAULT_DRIFT_FRACTION
     result = {"name": name, "dir": directory}
 
     energy_xvg = os.path.join(directory, "%s_energy.xvg" % name)
@@ -111,26 +116,34 @@ def analyse_one(name, directory, equil_fraction=None):
     # bar*nm: the unit of the #Surf*SurfTen column, which is the surface tension times
     # the number of interfaces. Not bar.
     result["surften"] = {"mean": gamma_mean, "err": gamma_err, "units": "bar*nm"}
-    result["surften_drift"] = mdtools.drift(t_eq, gamma_eq)
-    # Time reported in ns throughout (the .xvg is in ps). The drift above is computed on the raw
-    # ps arrays, but a drift expressed as a percentage over the window is unit-independent, so the
-    # reported and plotted time can be in ns without touching the drift maths.
+    # Means (the reference constants) are averaged over the production-matched window above.
+    # The equilibration DRIFT, by contrast, is assessed over a wider window (default the last
+    # half of the trajectory): a slope fit to the short means window is dominated by the area
+    # fluctuation and misreports equilibration, which is how a settled membrane can show a
+    # spurious few-percent "drift" over its last few ns. The means window is left untouched.
+    t_dr, gamma_dr = mdtools.tail(time, gamma, drift_fraction)
+    result["surften_drift"] = mdtools.drift(t_dr, gamma_dr)
+    result["drift_window_ns"] = float((t_dr[-1] - t_dr[0]) / 1000.0)
+    # Time reported in ns throughout (the .xvg is in ps). Drift as a percentage over a window is
+    # unit-independent, so reporting and plotting in ns does not touch the drift maths.
     result["time"] = {"start": float(time[0]) / 1000.0, "end": float(time[-1]) / 1000.0,
-                      "analysed_from": float(t_eq[0]) / 1000.0, "units": "ns"}
+                      "analysed_from": float(t_eq[0]) / 1000.0,
+                      "drift_from": float(t_dr[0]) / 1000.0, "units": "ns"}
 
     if area is not None:
         t_eq_a, area_eq = mdtools.tail(time, area, equil_fraction)
         area_mean, area_err = mdtools.block_average(area_eq)
-        # Time average over the equilibration, which is a drift diagnostic. It is NOT the area
-        # the production run is held at: that is box.x * box.y of the final structure, which is
-        # what tools/membrane.py calibrate reads and writes into the MembraneDef.
+        # Time average over the production window. It is NOT the area the production run is held
+        # at: that is box.x * box.y of the final structure, which tools/membrane.py calibrate reads.
         result["area"] = {"mean": area_mean, "err": area_err, "units": "nm2",
                           "note": "time average, diagnostic only; the held area is box.x*box.y"}
-        # Drift expressed over the analysed window, which is what matters: a slope that is
-        # negligible per picosecond can still be a percent of the area over 100 ns.
-        slope = mdtools.drift(t_eq_a, area_eq)
-        span = float(t_eq_a[-1] - t_eq_a[0])
-        result["area_drift_pct_over_window"] = 100.0 * slope * span / area_mean if area_mean else float("nan")
+        # Area drift over the wider drift window, expressed as a percentage of the mean over that
+        # same window, which is the robust equilibration check.
+        t_dr_a, area_dr = mdtools.tail(time, area, drift_fraction)
+        slope = mdtools.drift(t_dr_a, area_dr)
+        span = float(t_dr_a[-1] - t_dr_a[0])
+        drift_mean = float(np.mean(area_dr))
+        result["area_drift_pct_over_window"] = 100.0 * slope * span / drift_mean if drift_mean else float("nan")
 
     gro = os.path.join(directory, "%s_eq.gro" % name)
     if os.path.exists(gro):
@@ -182,11 +195,13 @@ def verdict(result):
 
     if "area_drift_pct_over_window" in result:
         d = result["area_drift_pct_over_window"]
+        w = result.get("drift_window_ns")
+        window = ("the last %.0f ns" % w) if w else "the drift window"
         if abs(d) > 1.0:
-            notes.append("Area still drifting: %.2f %% over the analysed window. Equilibrate "
-                         "longer before trusting the reference area." % d)
+            notes.append("Area still drifting: %.2f %% over %s. Equilibrate longer before "
+                         "trusting the reference area." % (d, window))
         else:
-            notes.append("Area drift %.2f %% over the analysed window, flat enough." % d)
+            notes.append("Area drift %.2f %% over %s, flat enough." % (d, window))
 
     if "leaflets" in result:
         u, l = result["leaflets"]["upper"], result["leaflets"]["lower"]
@@ -344,12 +359,18 @@ def main():
                    help="fraction of the trajectory kept for averaging (default %.2f, taken from "
                         "UserSettings.ENERGY_init_fraction so this agrees with the window the "
                         "production runs and tools/membrane.py use)" % DEFAULT_EQUIL_FRACTION)
+    s.add_argument("--drift-fraction", type=float, default=DEFAULT_DRIFT_FRACTION,
+                   help="fraction of the trajectory used to assess the equilibration drift "
+                        "(default %.2f, the last half); independent of the averaging window, so "
+                        "a settled membrane is not failed by fluctuation over a short tail"
+                        % DEFAULT_DRIFT_FRACTION)
     s.add_argument("--outdir", default=None)
 
     c = sub.add_parser("compare", help="compare several membranes")
     c.add_argument("--dir", required=True, help="parent directory holding one subdir per membrane")
     c.add_argument("--names", nargs="+", required=True)
     c.add_argument("--equil-fraction", type=float, default=DEFAULT_EQUIL_FRACTION)
+    c.add_argument("--drift-fraction", type=float, default=DEFAULT_DRIFT_FRACTION)
     c.add_argument("--outdir", default=None)
 
     args = parser.parse_args()
@@ -357,7 +378,7 @@ def main():
     if args.command == "single":
         outdir = args.outdir or args.dir
         os.makedirs(outdir, exist_ok=True)
-        result = analyse_one(args.name, args.dir, args.equil_fraction)
+        result = analyse_one(args.name, args.dir, args.equil_fraction, args.drift_fraction)
         print("MEMBRANE %s" % result["name"])
         print_table([result])
         print()
@@ -373,7 +394,7 @@ def main():
     else:
         outdir = args.outdir or args.dir
         os.makedirs(outdir, exist_ok=True)
-        results = [analyse_one(n, os.path.join(args.dir, n), args.equil_fraction)
+        results = [analyse_one(n, os.path.join(args.dir, n), args.equil_fraction, args.drift_fraction)
                    for n in args.names]
         print("MEMBRANE COMPARISON")
         print_table(results)

@@ -243,8 +243,10 @@ if {[info exists env(VIEW_LIPID_REP)] && $env(VIEW_LIPID_REP) ne ""} {
 #                    colour. Reverts to the plain body if the purple tint is not wanted.
 set color_by [env_or VIEW_COLOR_BY charge]
 if {$color_by eq "charge"} {
-    set neu_body  "($lipids) and (same residue as (name GL0))"
-    set rest_body "($lipids) and not (same residue as (name GL0))"
+    # POPG is the neutral/anionic lipid to highlight. Selected by resname directly (robust across
+    # VMD builds) rather than via "same residue as (name GL0)".
+    set neu_body  "resname POPG"
+    set rest_body "($lipids) and not resname POPG"
     foreach pair [list [list $neu_body $c_head_neu] [list $rest_body $c_tail]] {
         set sel [lindex $pair 0]
         set probe [atomselect top $sel]

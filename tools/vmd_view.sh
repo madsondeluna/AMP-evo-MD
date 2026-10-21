@@ -28,12 +28,12 @@
 #   - Colours use a muted palette (seaborn "deep", matching docs/membranes.png) and are tunable live
 #     via env vars, each a VMD ColorID (0-32): VIEW_TAIL_COLOR, VIEW_HEADCAT_COLOR, VIEW_HEADNEU_COLOR,
 #     VIEW_PO4_COLOR, VIEW_GLYC_COLOR, VIEW_PEPTIDE_COLOR, VIEW_NA_COLOR, VIEW_CL_COLOR, VIEW_WATER_COLOR.
-#   - VIEW_COLOR_BY selects the lipid body scheme: "region" (default) draws every lipid body grey
-#     with the head/phosphate/glycerol marks on top; "charge" additionally tints the neutral (GL0)
-#     lipid, POPG, purple, leaving every other lipid grey. Purple is then the one saturated lipid
-#     colour, so POPG stands out and the bacterial (POPE:POPG) and host (POPC) membranes are
-#     distinguishable side by side, without a blue body competing with the blue water. The region
-#     marks still overlay in both modes.
+#   - VIEW_COLOR_BY selects the lipid body scheme: "charge" (default) tints the neutral (GL0)
+#     lipid, POPG, purple and leaves every other lipid grey, so POPG is the one saturated lipid
+#     colour and the bacterial (POPE:POPG) and host (POPC) membranes are distinguishable side by
+#     side, without a blue body competing with the blue water; "region" reverts to a plain grey
+#     body for every lipid. The head/phosphate/glycerol marks overlay in both modes, so charge
+#     only adds the purple POPG bodies and nothing is lost relative to region.
 #   - Every component has its own representation, toggleable in Graphics > Representations.
 #   - Water is shown as a transparent surface by default; set VIEW_HIDE_WATER=1 to hide it.
 #   - The periodic box outline is not drawn by default; set VIEW_SHOW_BOX=1 to draw it.
@@ -234,14 +234,14 @@ if {[info exists env(VIEW_LIPID_REP)] && $env(VIEW_LIPID_REP) ne ""} {
 }
 
 # Lipid body. Two schemes, chosen by VIEW_COLOR_BY:
-#   region (default) one grey chain, so the Licorice bonds draw continuously and the coloured
-#                    region marks below carry all the colour.
-#   charge           the neutral (GL0) lipid, POPG, is tinted purple and every other lipid stays
+#   charge (default) the neutral (GL0) lipid, POPG, is tinted purple and every other lipid stays
 #                    grey. Whole lipids stay in one representation, so the bonds remain continuous,
 #                    and the region marks still overlay. Purple is the one saturated lipid colour,
 #                    so POPG pops and the bacterial (POPE:POPG) and host (POPC) membranes are told
 #                    apart side by side, with no blue body competing with the blue water.
-set color_by [env_or VIEW_COLOR_BY region]
+#   region           one grey chain for every lipid; the coloured region marks below carry all the
+#                    colour. Reverts to the plain body if the purple tint is not wanted.
+set color_by [env_or VIEW_COLOR_BY charge]
 if {$color_by eq "charge"} {
     set neu_body  "($lipids) and (same residue as (name GL0))"
     set rest_body "($lipids) and not (same residue as (name GL0))"

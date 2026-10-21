@@ -1290,15 +1290,26 @@ component is individually toggleable and the same command works on a bare bilaye
 
 ![How tools/vmd_view.sh is used and what it draws](docs/vmd_view.png)
 
-**What it draws.** One representation per lipid type present, each in a flat colour of its own so
-the types are visually separate and can be toggled independently in `Graphics > Representations`.
-Lipids are drawn as VDW beads by default, with no external setup; they become licorice sticks (the
-Martini-tutorial look) only when the Martini bonds are added (see the next paragraph). The peptide is in yellow and slightly larger;
+**What it draws.** Lipids are coloured by bead region, not by lipid type, so the scheme is identical
+across compositions: a grey body with coloured marks on the phosphate (red), the glycerol (green)
+and the head beads (cationic NC3/NH3 blue, neutral GL0 purple). Each mark is a separate
+representation, toggleable in `Graphics > Representations`. Lipids are drawn as VDW beads by
+default, with no external setup; they become licorice sticks (the Martini-tutorial look) only when
+the Martini bonds are added (see the next paragraph). The peptide is in orange and slightly larger;
 ions as small beads with Na and Cl in their own colours; and water as a transparent QuickSurf surface, all in a chalky
 matte style (VMD's `AOChalky` material with ambient occlusion, orthographic projection), except the
 water, which is transparent. Set `VIEW_HIDE_WATER=1` to drop the water surface. The periodic box outline is not drawn by default; set
 `VIEW_SHOW_BOX=1` to draw it. To try a different lipid style, set `VIEW_LIPID_REP`, for example
 `"Bonds 1.0 12.0"` or `"VDW 1.0 20.0"`.
+
+**Telling the membranes apart (`VIEW_COLOR_BY`).** By default (`VIEW_COLOR_BY=charge`) the neutral
+lipid POPG (the GL0 head) is tinted purple over its whole body while every other lipid stays grey.
+POPG is then the one saturated lipid colour, so it stands out and the bacterial membrane (POPE:POPG)
+and the host (POPC, no POPG) are distinguishable at a glance when placed side by side. Purple is used
+rather than a second blue so the lipid never competes with the blue water surface. The region marks
+still overlay, so this only adds the purple POPG bodies and loses nothing. Set `VIEW_COLOR_BY=region`
+to revert to a plain grey body for every lipid. All colours remain tunable live as VMD ColorIDs
+through the `VIEW_*_COLOR` variables.
 
 **Drawing the Martini bonds (sticks).** VMD cannot recover coarse-grained bonds from a `.gro` (the
 beads sit too far apart for its distance search) and it does not read a `.tpr`, so a bare membrane

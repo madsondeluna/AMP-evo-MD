@@ -952,6 +952,45 @@ every iteration and resumes with `--restart`, described under
 [Step 4](#step-4-run-a-campaign)); that is what makes it safe to pause a multi-day campaign and
 resume days later.
 
+### Reference membranes on record
+
+Both reference membranes are committed under `user/base/insert_peptide/` and have passed
+equilibration QC. This is the current state of the study's references, for tracking.
+
+| Membrane | Role | Composition | Box x=y (nm) | Area (nm^2) | APL (nm^2) | Thickness (nm) | Surface tension (bar nm) | Area drift (window) | Equilibration |
+|---|---|---|---|---|---|---|---|---|---|
+| bacterial | target | POPE:POPG ~70:30 (140:58) | 7.90 | 62.3 | 0.629 | 3.93 | 7.9 +/- 15.5 (zero within error) | +0.97% (flat) | 500 ns |
+| host | host | POPC (200) | 8.08 | 66.5 | 0.665 | 3.82 | 12.8 +/- 18.9 (zero within error) | -2.59% (under review) | 500 ns |
+
+Reading and caveats:
+
+- Both membranes sit at zero surface tension within error, which is the gate for using them as a
+  free-membrane reference.
+- The QC values above are block averages over the last 5% (25 ns) of each 500 ns run
+  (`--equil-fraction 0.05`, the default). The reference constants that actually enter the
+  calibrated `MEMBRANES` registry come from `tools/membrane.py calibrate`, not from these
+  diagnostics; the committed `user/membranes.py` ships both membranes uncalibrated by design.
+- The host area shows a -2.59% drift over the 25 ns window and is flagged. Over the whole 500 ns
+  the box drift is about +0.1% (essentially flat), so this is most likely a short-window artifact
+  rather than true non-equilibrium. Confirm with a wider window
+  (`membrane_analysis.py single --name host --dir prep/host --equil-fraction 0.5`); if the drift
+  persists, extend the host equilibration before trusting its reference area.
+- The committed host is pure POPC, a neutral zwitterionic membrane. This differs from the
+  POPC:DPSM:CHOL 60:10:30 erythrocyte mimic described in the `user/membranes.py` notes: without the
+  sterol fraction it is a generic neutral host, not yet the hemolysis proxy. Upgrading the host to
+  the sterol-containing composition is a planned step.
+
+Two operational notes for the QC tooling:
+
+- `membrane_analysis.py` expects `prep/<name>/<name>_eq.gro`, `prep/<name>/<name>.edr` and
+  `prep/<name>/<name>_energy.xvg`. A build that names its outputs `equil.*` needs the energy file
+  generated under the expected name, and the structure made available under `<name>_eq.gro`:
+  ```bash
+  printf 'Box-X\nBox-Y\n#Surf*SurfTen\n' | gmx energy -f prep/host/equil.edr -o prep/host/host_energy.xvg
+  cp prep/host/equil.gro prep/host/host_eq.gro
+  ```
+- Time is reported and plotted in ns throughout the analysis tooling.
+
 ### Step 2: measure the calibration set
 
 Copy the template and fill it in, then set `STATE = 1` in `run.py`:

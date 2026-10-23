@@ -954,51 +954,48 @@ resume days later.
 
 ### Reference membranes on record
 
-Both reference membranes are equilibrated and committed under `user/base/insert_peptide/`. The
-constant-area production reference is being re-measured at the equilibrium area after a first run
-exposed a pre-stress (see the finding below). This is the current state of the study's references,
-for tracking.
+Both reference membranes are equilibrated, calibrated, and committed under
+`user/base/insert_peptide/`, and this repository ships them calibrated: the registry in
+`user/membranes.py` carries the measured constants, so `require_all_calibrated()` passes on a fresh
+checkout. (This is a deliberate choice for this study; the upstream convention is to ship the
+registry uncalibrated and fill it locally.)
 
-| Membrane | Role | Composition | Held box x=y (nm) | Held area (nm^2) | APL (nm^2) | Thickness (nm) | Equilibration |
+| Membrane | Role | Composition | Held box x=y (nm) | Held area (nm^2) | APL (nm^2) | Thickness (nm) | Reference surface tension (bar nm) |
 |---|---|---|---|---|---|---|---|
-| bacterial | target | POPE:POPG ~70:30 (140:58) | 7.888 | 62.23 | 0.629 | 3.93 | 500 ns |
-| host | host | POPC (200) | 8.141 | 66.28 | 0.665 | 3.82 | 500 ns |
+| bacterial | target | POPE:POPG 70:30 (140:58) | 7.888 | 62.226 | 0.629 | 3.93 | -2.62 +/- 11.0 |
+| host | host | POPC (200) | 8.141 | 66.277 | 0.663 | 3.87 | -9.55 +/- 4.10 |
 
-Finding and fix (reference surface tension):
+How the reference surface tension was made tensionless:
 
 - The semi-isotropic equilibration relaxes the box to zero tension by construction, so its surface
-  tension is ~0 and cannot by itself show whether the constant-area production reference is
+  tension is ~0 and does not by itself show whether the constant-area production reference is
   tensionless. The gate that matters is the production reference tension.
-- The first production reference held the area at the equilibration's final-frame box, which sat
-  ~1% off each membrane's equilibrium area (bacterial +1.2%, host -1.4%, ordinary area
-  fluctuation). The bilayer area-compressibility modulus is high, so ~1% area becomes tens of
-  bar nm: the free-membrane reference came out +63 bar nm (bacterial) and -26 bar nm (host), both
-  failing the tensionless gate and the tool's WARNING. A pre-stressed bilayer changes how a peptide
-  perturbs it, so it is not a usable reference. The baseline cancels in delta_gamma only for small
-  residuals; +63 and -26 are not small.
-- Fix: hold the production at the equilibrium area. Rescale the equilibrated structure's box to
-  the square root of the equilibrium area and re-run the production reference. The production
-  averages only its last 5% and discards the first 95%, so the sub-1% affine strain from the
-  rescale relaxes before the averaged window.
-  ```bash
-  # s = sqrt(A_eq / A_final): 0.99418 for bacterial, 1.00704 for host
-  gmx editconf -f prep/<name>/equil.gro -scale <s> <s> 1 -o prep/<name>/equil.gro
-  PASS=2 AUTO=1 ./tools/protocol.sh <name> "<composition>" <role>
-  ```
-  Verify the emitted `surften_free` is near zero (a few bar nm) before trusting it, then copy the
-  rescaled production structure into `membrane_<name>.gro` and paste the `MembraneDef`. The
-  committed structures are being updated to these equilibrium-area versions. The reference
-  constants that enter the calibrated `MEMBRANES` registry come from `tools/membrane.py calibrate`;
-  the committed `user/membranes.py` ships both membranes uncalibrated by design.
-- Equilibration drift (a separate check): over the last 250 ns the area drift is +0.55%
-  (bacterial) and +0.25% (host), both flat; the -2.6% that appeared over only the last 25 ns was a
-  short-window artifact (`--drift-fraction 0.5` assesses this over the last half, not the short
-  averaging tail). Both membranes are equilibrated; the issue above is the held production area,
-  not equilibration.
-- The committed host is pure POPC, a neutral zwitterionic membrane. This differs from the
-  POPC:DPSM:CHOL 60:10:30 erythrocyte mimic described in the `user/membranes.py` notes: without the
-  sterol fraction it is a generic neutral host, not yet the hemolysis proxy. Upgrading the host to
-  the sterol-containing composition is a planned step.
+- A first production reference held the area at the equilibration's final-frame box, which sat ~1%
+  off each membrane's equilibrium area (ordinary fluctuation). The bilayer area-compressibility
+  modulus is high, so ~1% area became tens of bar nm: +63 bar nm (bacterial) and -26 bar nm (host),
+  both failing the tensionless gate. A pre-stressed bilayer changes how a peptide perturbs it, and
+  the two signs were opposite, which would have inflated the apparent selectivity. The delta_gamma
+  baseline cancels only for small residuals; +63 and -26 are not small.
+- Fix: hold the production at the equilibrium area. The bacterial membrane needed a ~1% compression,
+  which is stable, so it was reached by rescaling the box (`gmx editconf -scale`). The host needed a
+  ~1% expansion, which under-densifies the bilayer and crashed a direct production ("atoms moved too
+  far between domain decomposition steps"); it was instead reached by extracting a real equilibrated
+  frame from `equil.xtc` whose box was already at the equilibrium area (the 489 ns frame), which has
+  the correct density. The committed structures are these equilibrium-area versions.
+- Result: both references are tensionless within the method's noise, -2.62 +/- 11.0 (bacterial) and
+  -9.55 +/- 4.10 (host) bar nm, down from +63 / -26, with small, same-sign residuals that cancel in
+  delta_gamma without biasing selectivity. `tools/membrane.py calibrate` emitted the constants, now
+  in `user/membranes.py`.
+- Lesson for a later membrane: a compression can be rescaled in place, but an expansion should come
+  from a real trajectory frame at the target area, not from scaling, so the bilayer keeps its
+  density.
+- Equilibration drift (a separate check): over the last 250 ns the area drift is +0.55% (bacterial)
+  and +0.25% (host), both flat (`--drift-fraction 0.5` assesses this over the last half, not the
+  short averaging tail). Both membranes are equilibrated; the issue above was the held production
+  area, not equilibration.
+- The committed host is pure POPC, a neutral zwitterionic membrane, not the sterol-containing
+  POPC:DPSM:CHOL erythrocyte mimic in the original notes; without the sterol fraction it is a generic
+  neutral host, and upgrading it to the sterol composition is a planned step.
 
 Two operational notes for the QC tooling:
 

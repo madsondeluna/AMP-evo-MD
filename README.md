@@ -1675,6 +1675,26 @@ fall back to a single process.
 Raise `OMP_NUM_THREADS` to give the single GROMACS process the cores the MPI ranks would have
 used.
 
+**`Fatal error: Too many warnings` from `grompp`.** GROMACS 2024 and 2025 reject a few mdp keys
+that older builds accepted, and each one counts against `grompp`'s default `maxwarn = 0`, so a
+single warning aborts the step. This fork clears the offenders at the source rather than raising
+`maxwarn`, which would also mask warnings worth seeing. Two cases were fixed, both inherited from
+the 2018-era mdps:
+
+- The dead QMMM keys `QMMMscheme` and `MMChargeScaleFactor` have no effect under `QMMM = no` but
+  are unknown left-hand keys in GROMACS 2024+, one warning each. They are commented out in every
+  mdp that carried them (`generate_peptide/steep_pept.mdp`, `generate_peptide/eq_small_dt_pept.mdp`,
+  `insert_peptide/steep_system.mdp`, `production/steep_restr_system.mdp`, and earlier
+  `production/steep_softcore_system.mdp`).
+- The Berendsen barostat is now a warning because it does not generate a strictly correct
+  ensemble. It is replaced by `C-rescale`, the recommended drop-in, in the two mdps that used it
+  (`generate_peptide/eq_small_dt_pept.mdp`, isotropic, and `production/npt.mdp`, anisotropic). The
+  coupling type, `tau_p`, compressibility and `ref_p` are unchanged, so `npt.mdp` keeps its
+  constant-area setup (zero lateral compressibility, only z coupled to 1 bar) and the relaxed
+  endpoint is the same.
+
+If a new key trips the same error on a later GROMACS, prefer fixing the mdp over `maxwarn`.
+
 **`Permission denied` writing anywhere.** Everything this pipeline writes goes under the clone
 and the directories passed with `--output_dir`, so run it from a path you own, such as
 `~/AMP-evo-MD`, and not from a shared or read-only location.

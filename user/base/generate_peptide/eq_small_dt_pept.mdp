@@ -164,8 +164,12 @@ tc-grps                  = Protein
 ; Time constant (ps) and reference temperature (K)
 tau_t                    = 1.0
 ref_t                    = 310
-; pressure coupling     
-Pcoupl                   = berendsen
+; pressure coupling
+; Berendsen -> C-rescale: GROMACS 2024+ flags the Berendsen barostat as a WARNING
+; (it does not generate a strictly correct ensemble) and grompp aborts at maxwarn=0.
+; C-rescale is the recommended replacement, equally gentle for equilibration but
+; ensemble-correct. Same ref_p = 1 bar, so the relaxed endpoint is unchanged.
+Pcoupl                   = C-rescale
 Pcoupltype               = Isotropic
 nstpcouple               = -1
 ; Time constant (ps), compressibility (1/bar) and reference P (bar)

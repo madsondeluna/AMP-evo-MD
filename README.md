@@ -1046,6 +1046,58 @@ export OMP_NUM_THREADS=$(python3 tools/cores.py --threads-per-rank 99 --export \
 python run.py --output_dir calibration_run
 ```
 
+### The calibration set used in this study
+
+The peptides below were curated for this pipeline, which imposes an alpha-helix on every peptide.
+The selection is therefore restricted to peptides that are predominantly alpha-helical in a
+membrane and close to the campaign length (24 residues): disulfide-stabilised, beta-sheet and
+proline-hinged peptides are excluded because the imposed helix would misrepresent them. Every
+sequence in the verified table was read directly from the UniProt flat file (fetched in this work),
+not from memory, and cross-checked against the primary reference. MIC and hemolysis numbers come
+from the primary papers; the per-strain values live in tables that were not machine-readable from
+the build environment (DBAASP and APD3 were not reachable here), so the numeric columns are to be
+completed from those databases and are marked accordingly.
+
+Verified peptides (sequence confirmed against UniProt):
+
+| Name | Sequence (1-letter) | Len | Charge (pH 7) | Class | Activity (from primary ref) | UniProt | Primary reference |
+|---|---|---|---|---|---|---|---|
+| Magainin 2 | GIGKFLHSAKKFGKAFVGEIMNS | 23 | +3 | selective | broad antibacterial, nonhemolytic at antimicrobial concentrations | P11006 (83-105) | Zasloff 1987, PNAS 84:5449, doi:10.1073/pnas.84.15.5449, PMID 3299384 |
+| Magainin 1 | GIGKFLHSAGKFGKAFVGEIMKS | 23 | +3 | selective | broad antibacterial, nonhemolytic (same paper) | P11006 (37-59) | Zasloff 1987 (as above) |
+| PGLa | GMASKAGAIAGKIAKVALKAL (C-term amide) | 21 | +5 | selective | magainin-family, synergises with magainin 2, low hemolysis | Q91826 / Q99134 (39-59) | Soravia, Martini, Zasloff 1988, FEBS Lett 228:337, doi:10.1016/0014-5793(88)80027-9, PMID 3125066 |
+| Pleurocidin | GWGSFFKKAAHVGKHVGKAALTHYL | 25 | +4 | selective | MIC/MBC vs 11 Gram +/- bacteria incl. E. coli, low hemolysis | P81941 (23-47) | Cole, Weis, Diamond 1997, JBC 272:12008, doi:10.1074/jbc.272.18.12008, PMID 9115266 |
+| Melittin | GIGAVLKVLTTGLPALISWIKRKRQQ (C-term amide) | 26 | +6 | lytic | reference hemolytic/lytic peptide; strongly active on both bacteria and erythrocytes | P01501 (44-69) | Habermann 1972, Science 177:314, doi:10.1126/science.177.4046.314, PMID 4113805 |
+| V681 | KWKSFLKTFKSAVKTVLHTALKAISS (N-acetyl, C-amide) | 26 | +6 | lytic | de novo amphipathic helix; strongly hemolytic parent of a selectivity-optimisation series | (synthetic) | Chen et al 2005, JBC 280:12316, doi:10.1074/jbc.M413406200, PMID 15677462, PMC1393284 |
+
+Caveats on this table, stated rather than hidden:
+
+- Melittin carries Pro14 (the GLPAL kink), so under a single imposed helix its real bent two-helix
+  geometry is not represented. It is kept as the canonical hemolytic reference and as a deliberate
+  test of the imposed-helix assumption; the proline-free V681 is the clean lytic anchor.
+- V681's sequence is from the primary paper (Chen et al 2005); it is synthetic, so it has no UniProt
+  entry and the residue string was not cross-checked against a second curated database here.
+- The numeric MIC and hemolysis (HC50) values are to be filled in from DBAASP (dbaasp.org) and APD3
+  (aps.unmc.edu), which were not reachable from the build environment. Each peptide has a record in
+  those databases keyed to the references above.
+
+Classes still to complete:
+
+- inactive. No validated alpha-helical ~24-mer with reported absence of activity was retrievable
+  here. The reliable route is the designed, charge- and helix-matched inactive analogues reported
+  on a single scaffold by Chen et al 2005 (JBC 280:12316, the V681 series, open access as
+  PMC1393284) and by Dathe et al 1997 (FEBS Lett 403:208, PMID 9042968) and Wieprecht et al 1997
+  (Biochemistry 36:12869, PMID 9335545), whose low-hydrophobicity magainin-amide analogues are
+  reported inactive. Their exact residue strings are in full-text tables that were paywalled or
+  captcha-blocked here.
+- binds without lysing. No clean alpha-helical example qualifies: the classic non-lytic
+  translocators (buforin II and cell-penetrating peptides) depend on a proline hinge or are not
+  helical, so they are excluded by the imposed-helix rule. This class is left unfilled; if an entry
+  is needed it should be a sub-lytic concentration regime of a binding-characterised helix, labelled
+  as below-threshold, rather than a distinct peptide.
+
+The `labels.csv` for the go/no-go uses only `inactive`, `selective` and `lytic`, so the binder class
+never enters the concordance; it is a separate diagnostic.
+
 ### How many ranks and threads
 
 `tools/cores.py` works this out, but the reasoning is worth knowing, because the obvious answer

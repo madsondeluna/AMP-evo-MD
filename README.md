@@ -1675,6 +1675,28 @@ fall back to a single process.
 Raise `OMP_NUM_THREADS` to give the single GROMACS process the cores the MPI ranks would have
 used.
 
+**`No module named mpi4py` from a Python you did not choose, under `mpirun`.** The run aborts with
+`MPI_ABORT` and lines like `/softwares/.../python: No module named mpi4py`, naming an interpreter
+that is not the one where `mpi4py` was installed. `mpirun` launches whatever `python` resolves to
+on `PATH` at exec time, and a loaded module or a site default can put a different Python ahead of
+the one that has `mpi4py`. Check with `which python` and `python -c "import mpi4py"`; if they
+disagree with the interpreter named in the error, activate the environment that holds `mpi4py`
+(for a venv, `source .venv/bin/activate`) so it leads `PATH`, or hand the interpreter to `mpirun`
+by absolute path: `mpirun -np N /full/path/to/.venv/bin/python -m mpi4py run.py ...`. The `mpi4py`
+build must match the MPI that `mpirun` comes from; if it does not, rebuild as in the libmpi entry
+above.
+
+**`Timeout expired ... Killing process` during production, then `MPI_ABORT`.** The production
+`mdrun` ran longer than `timeout_Production_MDRUN` and was killed; once the retries are spent the
+run aborts. This is a sizing mismatch, not a crash: `SIM_time / SIM_dt` steps at the machine's
+throughput exceeded the timeout. Size the two together. Measure the throughput first with a short
+run and read the `Performance: ... ns/day` line from a candidate's `stdout_stderr.log` (it is
+appended per step, so it survives the later commands), then set `timeout_Production_MDRUN` to about
+twice the expected wall time (`SIM_time / ns_per_day` days) and, under heavy parallelism, add
+margin for memory-bandwidth contention between concurrent `mdrun` processes. `timeout_Production_relax_MDRUN`
+covers only the short relax step and rarely needs more than a few minutes. Keep
+`AMP_NP * OMP_NUM_THREADS` at or below the physical core count so the workers do not oversubscribe.
+
 **`Fatal error: Too many warnings` from `grompp`.** GROMACS 2024 and 2025 reject a few mdp keys
 that older builds accepted, and each one counts against `grompp`'s default `maxwarn = 0`, so a
 single warning aborts the step. This fork clears the offenders at the source rather than raising

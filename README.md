@@ -1687,11 +1687,14 @@ the 2018-era mdps:
   `insert_peptide/steep_system.mdp`, `production/steep_restr_system.mdp`, and earlier
   `production/steep_softcore_system.mdp`).
 - The Berendsen barostat is now a warning because it does not generate a strictly correct
-  ensemble. It is replaced by `C-rescale`, the recommended drop-in, in the two mdps that used it
-  (`generate_peptide/eq_small_dt_pept.mdp`, isotropic, and `production/npt.mdp`, anisotropic). The
-  coupling type, `tau_p`, compressibility and `ref_p` are unchanged, so `npt.mdp` keeps its
-  constant-area setup (zero lateral compressibility, only z coupled to 1 bar) and the relaxed
-  endpoint is the same.
+  ensemble. It is replaced by `C-rescale`, the recommended drop-in, in the two mdps that used it.
+  `generate_peptide/eq_small_dt_pept.mdp` stays isotropic. `production/npt.mdp` cannot stay
+  anisotropic because C-rescale does not support anisotropic coupling in GROMACS 2025.3
+  ("C-rescale does not support pressure coupling type Anisotropic yet"), so its coupling is written
+  as `semiisotropic`, which C-rescale supports and which the membrane calibration already used. The
+  two forms are identical for this system: lateral (xy) compressibility is 0, so the bilayer area
+  stays fixed (constant-area production), and only the normal (z) couples to 1 bar. The relaxed
+  endpoint and the constant-area ensemble are unchanged.
 
 If a new key trips the same error on a later GROMACS, prefer fixing the mdp over `maxwarn`.
 

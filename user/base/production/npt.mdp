@@ -97,18 +97,22 @@ tc-grps                  = Protein Solvent Lipids
 tau_t                    =  1.0  1.0  1.0
 ref_t                    =  310  310  310
 ; pressure coupling
-; Berendsen -> C-rescale: GROMACS 2024+ flags the Berendsen barostat as a WARNING
-; (it does not generate a strictly correct ensemble) and grompp aborts at maxwarn=0.
-; C-rescale is the recommended replacement and supports anisotropic coupling. The
-; lateral (xx,yy) compressibility stays 0, so the bilayer area remains fixed
-; (constant-area production); only z couples to 1 bar, matching the membrane calibration.
+; Barostat: C-rescale, semiisotropic. GROMACS 2024+ flags the old Berendsen barostat as a
+; WARNING (it does not generate a strictly correct ensemble), so it was replaced by C-rescale,
+; the recommended ensemble-correct drop-in. C-rescale does NOT support anisotropic coupling in
+; GROMACS 2025.3 ("C-rescale does not support pressure coupling type Anisotropic yet"), so the
+; previous anisotropic form [0,0,4.5e-5,...] is expressed as semiisotropic, which C-rescale
+; supports and which the membrane calibration also used. The two are identical here: the lateral
+; (xy) compressibility is 0, so the bilayer area stays fixed (constant-area production), and only
+; the normal (z) couples to 1 bar. The constant-area coupling is load-bearing for the damage
+; objective (gamma is the observable), so the fixed lateral box must be preserved.
 Pcoupl                   = C-rescale
-Pcoupltype               = anisotropic
+Pcoupltype               = semiisotropic
 nstpcouple               = -1
-; Time constant (ps), compressibility (1/bar) and reference P (bar)
+; Time constant (ps), compressibility (1/bar) and reference P (bar); order is (lateral, normal)
 tau_p                    = 6.0
-compressibility          = 0.0 0.0 4.5e-5 0.0 0.0 0.0
-ref_p                    = 0.0 0.0 1.0 0.0 0.0 0.0
+compressibility          = 0.0 4.5e-5
+ref_p                    = 1.0 1.0
 ; Scaling of reference coordinates, No, All or COM
 refcoord_scaling         = All
 

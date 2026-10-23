@@ -155,16 +155,20 @@ class MembraneDef:
 
 MEMBRANES = {
 
+    # Calibrated references for this study. The reference surface tension is measured on the
+    # peptide-free membrane in the constant-area production ensemble (tools/protocol.sh PASS=2),
+    # holding the box at each composition's equilibrium area, so the free membrane is tensionless
+    # within the method's noise and the peptide runs are not scored against a pre-stressed bilayer.
     "bacterial": MembraneDef(
         name="bacterial",
         gro="membrane_bacterial.gro",
         top="membrane_bacterial.top",
         role="target",
-        # Counts are filled in by tools/protocol.sh along with the measurements; until then
-        # this membrane is uncalibrated and nothing will run with it.
-        composition=None,
-        notes=("Gram-negative inner membrane mimic. Anionic, no sterol. "
-               "Intended ratio POPE:POPG:CDL2 = 70:20:10."),
+        area_nm2=62.2264,
+        surften_free=(-2.61675, 11.00),
+        thickness_nm=3.9312,   # b_nm derives to 1.8084
+        composition={"POPE": 140, "POPG": 58},
+        notes="Gram-negative inner membrane mimic. Anionic, no sterol. POPE:POPG 70:30.",
     ),
 
     "host": MembraneDef(
@@ -172,10 +176,12 @@ MEMBRANES = {
         gro="membrane_host.gro",
         top="membrane_host.top",
         role="host",
-        composition=None,
-        notes=("Erythrocyte outer-leaflet mimic. Intended ratio POPC:DPSM:CHOL = 60:10:30. "
-               "The sterol fraction is the main determinant of resistance to lysis and is "
-               "what makes this a hemolysis proxy rather than a generic neutral membrane."),
+        area_nm2=66.2772,
+        surften_free=(-9.54955, 4.10),
+        thickness_nm=3.8710,   # b_nm derives to 1.7807
+        composition={"POPC": 200},
+        notes=("Neutral zwitterionic host (pure POPC). Not the sterol-containing erythrocyte "
+               "mimic; POPC:DPSM:CHOL upgrade planned."),
     ),
 }
 

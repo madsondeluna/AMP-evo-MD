@@ -1064,9 +1064,9 @@ Verified peptides (sequence confirmed against UniProt):
 |---|---|---|---|---|---|---|---|
 | Magainin 2 | GIGKFLHSAKKFGKAFVGEIMNS | 23 | +3 | selective | broad antibacterial, nonhemolytic at antimicrobial concentrations | P11006 (83-105) | Zasloff 1987, PNAS 84:5449, doi:10.1073/pnas.84.15.5449, PMID 3299384 |
 | Magainin 1 | GIGKFLHSAGKFGKAFVGEIMKS | 23 | +3 | selective | broad antibacterial, nonhemolytic (same paper) | P11006 (37-59) | Zasloff 1987 (as above) |
-| PGLa | GMASKAGAIAGKIAKVALKAL (C-term amide) | 21 | +5 | selective | magainin-family, synergises with magainin 2, low hemolysis | Q91826 / Q99134 (39-59) | Soravia, Martini, Zasloff 1988, FEBS Lett 228:337, doi:10.1016/0014-5793(88)80027-9, PMID 3125066 |
+| PGLa | GMASKAGAIAGKIAKVALKAL (C-term amide) | 21 | +4 | selective | magainin-family, synergises with magainin 2, low hemolysis | Q91826 / Q99134 (39-59) | Soravia, Martini, Zasloff 1988, FEBS Lett 228:337, doi:10.1016/0014-5793(88)80027-9, PMID 3125066 |
 | Pleurocidin | GWGSFFKKAAHVGKHVGKAALTHYL | 25 | +4 | selective | MIC/MBC vs 11 Gram +/- bacteria incl. E. coli, low hemolysis | P81941 (23-47) | Cole, Weis, Diamond 1997, JBC 272:12008, doi:10.1074/jbc.272.18.12008, PMID 9115266 |
-| Melittin | GIGAVLKVLTTGLPALISWIKRKRQQ (C-term amide) | 26 | +6 | lytic | reference hemolytic/lytic peptide; strongly active on both bacteria and erythrocytes | P01501 (44-69) | Habermann 1972, Science 177:314, doi:10.1126/science.177.4046.314, PMID 4113805 |
+| Melittin | GIGAVLKVLTTGLPALISWIKRKRQQ (C-term amide) | 26 | +5 | lytic | reference hemolytic/lytic peptide; strongly active on both bacteria and erythrocytes | P01501 (44-69) | Habermann 1972, Science 177:314, doi:10.1126/science.177.4046.314, PMID 4113805 |
 | V681 | KWKSFLKTFKSAVKTVLHTALKAISS (N-acetyl, C-amide) | 26 | +6 | lytic | de novo amphipathic helix; strongly hemolytic parent of a selectivity-optimisation series | (synthetic) | Chen et al 2005, JBC 280:12316, doi:10.1074/jbc.M413406200, PMID 15677462, PMC1393284 |
 
 Caveats on this table, stated rather than hidden:
@@ -1079,24 +1079,43 @@ Caveats on this table, stated rather than hidden:
 - The numeric MIC and hemolysis (HC50) values are to be filled in from DBAASP (dbaasp.org) and APD3
   (aps.unmc.edu), which were not reachable from the build environment. Each peptide has a record in
   those databases keyed to the references above.
+- Charge is the side-chain charge, K + R - D - E, with no termini, which is the convention
+  `UserSettings.charge_range` uses, so the calibration peptides and the generated candidates are
+  compared on the same charge definition.
 
-Classes still to complete:
+Inactive controls (designed scrambles):
 
-- inactive. No validated alpha-helical ~24-mer with reported absence of activity was retrievable
-  here. The reliable route is the designed, charge- and helix-matched inactive analogues reported
-  on a single scaffold by Chen et al 2005 (JBC 280:12316, the V681 series, open access as
-  PMC1393284) and by Dathe et al 1997 (FEBS Lett 403:208, PMID 9042968) and Wieprecht et al 1997
-  (Biochemistry 36:12869, PMID 9335545), whose low-hydrophobicity magainin-amide analogues are
-  reported inactive. Their exact residue strings are in full-text tables that were paywalled or
-  captcha-blocked here.
-- binds without lysing. No clean alpha-helical example qualifies: the classic non-lytic
-  translocators (buforin II and cell-penetrating peptides) depend on a proline hinge or are not
-  helical, so they are excluded by the imposed-helix rule. This class is left unfilled; if an entry
-  is needed it should be a sub-lytic concentration regime of a binding-characterised helix, labelled
-  as below-threshold, rather than a distinct peptide.
+No validated alpha-helical ~24-mer with reported absence of activity was retrievable from a reliable
+source in this environment (the designed inactive analogues on single scaffolds by Chen et al 2005,
+JBC 280:12316, PMC1393284, and by Dathe et al 1997, FEBS Lett 403:208, PMID 9042968, and Wieprecht
+et al 1997, Biochemistry 36:12869, PMID 9335545, live in full-text tables that were paywalled or
+captcha-blocked). The inactive class is therefore filled with designed scrambled controls rather
+than measured peptides, and labelled as such.
 
-The `labels.csv` for the go/no-go uses only `inactive`, `selective` and `lytic`, so the binder class
-never enters the concordance; it is a separate diagnostic.
+Each scramble keeps the exact amino-acid composition of a verified selective parent, so its length,
+side-chain charge and mean hydrophobicity are identical, and only the sequence order changes. Among
+50000 random permutations (seed 20231023, reproducible) the one with the lowest Eisenberg
+hydrophobic moment was kept, which destroys the amphipathic helical face that drives membrane
+disruption. A non-amphipathic helix of the same composition is the standard negative control for
+isolating the effect of amphipathic arrangement from composition.
+
+| Name | Sequence (1-letter) | Len | Charge | Parent | Hydrophobic moment (parent -> scramble) |
+|---|---|---|---|---|---|
+| scram-magainin2 | ILFKFGAFSGIGSKKGMVHNEAK | 23 | +3 | magainin 2 | 0.455 -> 0.001 |
+| scram-PGLa | ALLGKASMAKKGAAGAIVIKA | 21 | +4 | PGLa | 0.411 -> 0.001 |
+| scram-pleurocidin | TVKKAHGSHGAVYFAHKWKAGLLFG | 25 | +4 | pleurocidin | 0.362 -> 0.000 |
+
+These are designed controls, not experimentally measured peptides: the expectation that they are
+inactive follows from the loss of amphipathicity, and the go/no-go itself tests whether the observed
+delta_gamma places them below the selective and lytic peptides. If any scramble unexpectedly scores
+high, that is itself a finding about the observable.
+
+Class still unfilled, binds without lysing: no clean alpha-helical example qualifies, since the
+classic non-lytic translocators (buforin II, cell-penetrating peptides) depend on a proline hinge or
+are not helical and are excluded by the imposed-helix rule. If an entry is needed it should be a
+sub-lytic concentration regime of a binding-characterised helix, labelled below-threshold, rather
+than a distinct peptide. It does not enter the concordance in any case: the `labels.csv` for the
+go/no-go uses only `inactive`, `selective` and `lytic`.
 
 ### How many ranks and threads
 

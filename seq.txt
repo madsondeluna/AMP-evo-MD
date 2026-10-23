@@ -1,0 +1,25 @@
+# Calibration set for this study. STATE = 1 reads this file. One sequence per line, one-letter
+# codes; blank lines and anything after a # are ignored. Full provenance (sequence source,
+# class, charge, activity, primary reference) is in the README section
+# "The calibration set used in this study".
+#
+# Selective and lytic sequences were verified against UniProt. The inactive class is designed
+# scrambled controls: minimum Eisenberg hydrophobic-moment permutations of the selective parents
+# (seed 20231023), same composition, amphipathicity destroyed. They are controls, not measured
+# peptides. The "binds without lysing" class is intentionally omitted (no clean alpha-helical
+# example under the imposed-helix model).
+
+# selective  (active on the bacterial target, low hemolysis)
+GIGKFLHSAKKFGKAFVGEIMNS      # magainin 2       UniProt P11006   Zasloff 1987
+GIGKFLHSAGKFGKAFVGEIMKS      # magainin 1       UniProt P11006   Zasloff 1987
+GMASKAGAIAGKIAKVALKAL        # PGLa             UniProt Q91826   Soravia 1988
+GWGSFFKKAAHVGKHVGKAALTHYL    # pleurocidin      UniProt P81941   Cole 1997
+
+# lytic  (active on both target and host, hemolytic)
+GIGAVLKVLTTGLPALISWIKRKRQQ   # melittin         UniProt P01501   Habermann 1972 (Pro14, imposed-helix caveat)
+KWKSFLKTFKSAVKTVLHTALKAISS   # V681             Chen et al 2005  (de novo, proline-free)
+
+# inactive  (designed scrambled controls, non-amphipathic, composition matched to the parent)
+ILFKFGAFSGIGSKKGMVHNEAK      # scram-magainin2  (parent magainin 2)
+ALLGKASMAKKGAAGAIVIKA        # scram-PGLa       (parent PGLa)
+TVKKAHGSHGAVYFAHKWKAGLLFG    # scram-pleurocidin (parent pleurocidin)

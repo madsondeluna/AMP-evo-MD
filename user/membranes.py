@@ -171,18 +171,29 @@ MEMBRANES = {
         notes="Gram-negative inner membrane mimic. Anionic, no sterol. POPE:POPG 70:30.",
     ),
 
-    "host": MembraneDef(
-        name="host",
-        gro="membrane_host.gro",
-        top="membrane_host.top",
-        role="host",
-        area_nm2=66.2772,
-        surften_free=(-9.54955, 4.10),
-        thickness_nm=3.8710,   # b_nm derives to 1.7807
-        composition={"POPC": 200},
-        notes=("Neutral zwitterionic host (pure POPC). Not the sterol-containing erythrocyte "
-               "mimic; POPC:DPSM:CHOL upgrade planned."),
-    ),
+    # HOST MEMBRANE ARCHIVED (target-only pivot, 2026-10). The study now optimises disruption
+    # of the bacterial target membrane as a single objective; host selectivity is descoped to
+    # future work. The host entry below is kept commented, not deleted, so selectivity can be
+    # restored once a trustworthy host model exists. The pure-POPC host could not reproduce
+    # selectivity: in the class-validation run the selective peptides inserted into POPC as
+    # strongly as the lytic ones (hydrophobic LJ insertion dominates the weak anionic
+    # electrostatic preference), so selective and lytic were indistinguishable. The physical
+    # determinant of AMP selectivity is cholesterol, and building a cholesterol host in Martini 3
+    # with insane (a Martini 2 tool) was not reliable enough to trust. Restoring this requires a
+    # validated POPC:CHOL (or POPC:DPSM:CHOL) host, recalibrated with tools/protocol.sh, and the
+    # single objective in user/usersettings.py switched back toward a selectivity term.
+    #
+    # "host": MembraneDef(
+    #     name="host",
+    #     gro="membrane_host.gro",
+    #     top="membrane_host.top",
+    #     role="host",
+    #     area_nm2=66.2772,
+    #     surften_free=(-9.54955, 4.10),
+    #     thickness_nm=3.8710,   # b_nm derives to 1.7807
+    #     composition={"POPC": 200},
+    #     notes="Neutral zwitterionic host (pure POPC). Archived: did not reproduce selectivity.",
+    # ),
 }
 
 

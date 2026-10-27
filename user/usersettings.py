@@ -113,7 +113,12 @@ name_positive_ion_GENION            = "NA"
 name_negative_ion_GENION            = "CL"
 name_solvent_GENION                 = "W"
 neutralize                          = True
-WRITE_XTC                           = False #True
+# Keep every candidate's trajectory on disk. True for the class-validation run, where all
+# trajectories are retained for inspection and reproducibility (9 peptides x 3 replicas is a
+# few GB). For a STATE=0 GA campaign of thousands of candidates, run.py refuses True to avoid
+# filling the disk; decide the campaign retention policy (all, top-N, or downsampled) with the
+# disk numbers in hand before switching STATE and keeping this True.
+WRITE_XTC                           = True
 
 # Miscellaneous
 FILE_WRITE_DEBUGGING                = False

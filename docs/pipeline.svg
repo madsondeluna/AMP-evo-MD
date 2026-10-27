@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1120" width="1040" height="1120" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title>AMP-evo-MD pipeline</title>
-  <desc>Three phases: membrane preparation, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds two objectives, and every pipeline step is logged with its duration and outcome. Boxes are coloured by process: membrane preparation, the shared per-candidate pipeline, the campaign, monitoring, inputs and produced data.</desc>
+  <desc>Three phases: preparation of the bacterial target membrane, calibration as a go or no-go gate, and the genetic algorithm campaign. One measurement per candidate feeds a single damage objective on the target membrane, and every pipeline step is logged with its duration and outcome. Boxes are coloured by process: membrane preparation, the shared per-candidate pipeline, the campaign, monitoring, inputs and produced data.</desc>
 
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -64,7 +64,7 @@
   <path d="M 836 194 L 852 194" stroke="#009E73" stroke-width="1.2" fill="none" marker-end="url(#arrowGreen)"/>
 
   <text x="44" y="246" font-size="10.5" fill="#6b6b6b">Accepted when: surface tension zero within error, area no longer drifting, leaflets symmetric.</text>
-  <text x="44" y="268" font-size="10.5" fill="#D55E00">Optional second pass to a common 8.0 x 8.0 nm box, only when two membranes' natural areas diverge (e.g. cholesterol); otherwise production runs on the equilibrated box directly.</text>
+  <text x="44" y="268" font-size="10.5" fill="#6b6b6b">Target-only: one bacterial membrane (POPE:POPG 70:30). Production runs on the equilibrated box directly. The host is archived in user/membranes.py (see the README pivot note).</text>
 
   <!-- ===================== PER-CANDIDATE PIPELINE ===================== -->
   <rect x="24" y="318" width="992" height="268" rx="6" fill="#ffffff" stroke="#e6e6e2" stroke-width="1"/>
@@ -81,17 +81,13 @@
     <text x="266" y="414" text-anchor="middle" fill="#1a1a1a">build peptide</text>
     <text x="266" y="430" text-anchor="middle" fill="#6b6b6b" font-size="9.5">PeptideBuilder, martinize2</text>
 
-    <rect x="368" y="374" width="150" height="40" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
-    <text x="443" y="391" text-anchor="middle" fill="#1a1a1a">insert into bacterial</text>
-    <text x="443" y="406" text-anchor="middle" fill="#6b6b6b" font-size="9.5">POPE / POPG (3:1)</text>
-
-    <rect x="368" y="422" width="150" height="40" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
-    <text x="443" y="439" text-anchor="middle" fill="#1a1a1a">insert into host</text>
-    <text x="443" y="454" text-anchor="middle" fill="#6b6b6b" font-size="9.5">POPC (neutral)</text>
+    <rect x="368" y="392" width="150" height="52" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
+    <text x="443" y="414" text-anchor="middle" fill="#1a1a1a">insert into target</text>
+    <text x="443" y="430" text-anchor="middle" fill="#6b6b6b" font-size="9.5">bacterial POPE:POPG 70:30</text>
 
     <rect x="550" y="392" width="130" height="52" rx="4" fill="#eaf4fc" stroke="#2E8BC0" stroke-width="1"/>
     <text x="615" y="414" text-anchor="middle" fill="#1a1a1a">production</text>
-    <text x="615" y="430" text-anchor="middle" fill="#6b6b6b" font-size="9.5">400 ns each</text>
+    <text x="615" y="430" text-anchor="middle" fill="#6b6b6b" font-size="9.5">3 replicas x 200 ns</text>
 
     <rect x="712" y="386" width="284" height="64" rx="4" fill="#e9f6f1" stroke="#009E73" stroke-width="1.4"/>
     <text x="854" y="407" text-anchor="middle" fill="#1a1a1a" font-weight="600">observables.json</text>
@@ -101,36 +97,28 @@
 
   <g stroke="#8a8a85" stroke-width="1.2" fill="none" marker-end="url(#arrow)">
     <path d="M 166 418 L 194 418"/>
-    <path d="M 338 418 L 354 418 L 354 394 L 366 394"/>
-    <path d="M 354 418 L 354 442 L 366 442"/>
-    <path d="M 518 394 L 534 394 L 534 418 L 548 418"/>
-    <path d="M 518 442 L 534 442 L 534 418"/>
+    <path d="M 338 418 L 366 418"/>
+    <path d="M 518 418 L 548 418"/>
   </g>
   <path d="M 680 418 L 710 418" stroke="#009E73" stroke-width="1.4" fill="none" marker-end="url(#arrowGreen)"/>
 
-  <!-- the two objectives (damage vermillion, binding reddish-purple) -->
+  <!-- single objective: damage (vermillion) on the target membrane -->
   <g font-size="11">
-    <rect x="712" y="486" width="136" height="64" rx="4" fill="#fcefe7" stroke="#D55E00" stroke-width="1.4"/>
-    <text x="780" y="507" text-anchor="middle" fill="#1a1a1a" font-weight="600">damage</text>
-    <text x="780" y="523" text-anchor="middle" fill="#6b6b6b" font-size="9.5">induced leaflet tension</text>
-    <text x="780" y="537" text-anchor="middle" fill="#6b6b6b" font-size="9.5">on the target membrane</text>
-
-    <rect x="860" y="486" width="136" height="64" rx="4" fill="#f9eef4" stroke="#CC79A7" stroke-width="1.4"/>
-    <text x="928" y="507" text-anchor="middle" fill="#1a1a1a" font-weight="600">binding</text>
-    <text x="928" y="523" text-anchor="middle" fill="#6b6b6b" font-size="9.5">partitioning selectivity,</text>
-    <text x="928" y="537" text-anchor="middle" fill="#6b6b6b" font-size="9.5">target against host</text>
+    <rect x="786" y="486" width="136" height="64" rx="4" fill="#fcefe7" stroke="#D55E00" stroke-width="1.4"/>
+    <text x="854" y="507" text-anchor="middle" fill="#1a1a1a" font-weight="600">damage</text>
+    <text x="854" y="523" text-anchor="middle" fill="#6b6b6b" font-size="9.5">induced leaflet tension</text>
+    <text x="854" y="537" text-anchor="middle" fill="#6b6b6b" font-size="9.5">on the target membrane</text>
   </g>
 
   <g stroke="#009E73" stroke-width="1.4" fill="none" marker-end="url(#arrowGreen)">
-    <path d="M 854 450 L 854 468 L 780 468 L 780 484"/>
-    <path d="M 854 450 L 854 468 L 928 468 L 928 484"/>
+    <path d="M 854 450 L 854 484"/>
   </g>
 
-  <text x="44" y="502" font-size="11" fill="#1a1a1a" font-weight="600">One measurement, two objectives.</text>
-  <text x="44" y="520" font-size="10.5" fill="#6b6b6b">Both read the same file from the same pair of</text>
-  <text x="44" y="536" font-size="10.5" fill="#6b6b6b">production runs, so switching between them costs</text>
-  <text x="44" y="552" font-size="10.5" fill="#6b6b6b">no simulation, and re-scoring a finished campaign</text>
-  <text x="44" y="568" font-size="10.5" fill="#6b6b6b">under the other is post-processing.</text>
+  <text x="44" y="502" font-size="11" fill="#1a1a1a" font-weight="600">One measurement, one objective.</text>
+  <text x="44" y="520" font-size="10.5" fill="#6b6b6b">Target-only pivot: damage on the bacterial membrane.</text>
+  <text x="44" y="536" font-size="10.5" fill="#6b6b6b">Host selectivity is future work (see the README). A</text>
+  <text x="44" y="552" font-size="10.5" fill="#6b6b6b">binding objective still exists in the code, read from</text>
+  <text x="44" y="568" font-size="10.5" fill="#6b6b6b">the same file, but is not used in this study.</text>
 
   <text x="330" y="502" font-size="11" fill="#1a1a1a" font-weight="600">Every step is logged.</text>
   <text x="330" y="520" font-size="10.5" fill="#6b6b6b">One record per step in steps.jsonl, named</text>
@@ -147,19 +135,19 @@
   <g font-size="11">
     <rect x="44" y="676" width="186" height="58" rx="4" fill="#f7f7f5" stroke="#c9c9c3" stroke-width="1"/>
     <text x="137" y="696" text-anchor="middle" fill="#1a1a1a">known peptides</text>
-    <text x="137" y="712" text-anchor="middle" fill="#6b6b6b" font-size="9.5">inactive, selective, lytic,</text>
-    <text x="137" y="725" text-anchor="middle" fill="#6b6b6b" font-size="9.5">binds without lysing</text>
+    <text x="137" y="712" text-anchor="middle" fill="#6b6b6b" font-size="9.5">6 active (selective + lytic),</text>
+    <text x="137" y="725" text-anchor="middle" fill="#6b6b6b" font-size="9.5">3 inactive (scramble controls)</text>
 
     <rect x="262" y="676" width="228" height="58" rx="4" fill="#fdf3ec" stroke="#D55E00" stroke-width="1.4"/>
     <text x="376" y="696" text-anchor="middle" fill="#1a1a1a" font-weight="600">do the observables</text>
-    <text x="376" y="712" text-anchor="middle" fill="#1a1a1a" font-weight="600">separate the classes?</text>
-    <text x="376" y="727" text-anchor="middle" fill="#6b6b6b" font-size="9.5">calibrate.py</text>
+    <text x="376" y="712" text-anchor="middle" fill="#1a1a1a" font-weight="600">separate active from inactive?</text>
+    <text x="376" y="727" text-anchor="middle" fill="#6b6b6b" font-size="9.5">calibrate.py, 3 replicas per peptide</text>
   </g>
   <path d="M 230 705 L 258 705" stroke="#8a8a85" stroke-width="1.2" fill="none" marker-end="url(#arrow)"/>
 
   <text x="44" y="762" font-size="10.5" fill="#6b6b6b">No: stop. An optimiser cannot recover a signal that is not in the</text>
-  <text x="44" y="778" font-size="10.5" fill="#6b6b6b">observable. Revisit the observable, the membranes, or the imposed-helix assumption.</text>
-  <text x="44" y="802" font-size="10.5" fill="#009E73">Yes: the class boundaries set the scoring window. Continue to the campaign.</text>
+  <text x="44" y="778" font-size="10.5" fill="#6b6b6b">observable. Revisit the observable, the sampling, or the imposed-helix assumption.</text>
+  <text x="44" y="802" font-size="10.5" fill="#009E73">Yes: the active/inactive boundary sets the scoring window. Continue to the campaign.</text>
 
   <!-- ===================== PHASE 3: CAMPAIGN (amber) ===================== -->
   <rect x="530" y="610" width="486" height="212" rx="6" fill="#ffffff" stroke="#e6e6e2" stroke-width="1"/>

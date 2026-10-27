@@ -13,3 +13,6 @@ output/
 prep/
 report/
 fake_progress.txt
+# Archived pre-pivot outputs (host membrane runs, superseded validation/benchmark dirs).
+# Moved here manually; kept on disk for the record, out of git.
+legacy/

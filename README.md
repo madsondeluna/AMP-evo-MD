@@ -723,6 +723,36 @@ head -40 campaign_damage/output.txt                     # the campaign header
 python -c "import json; print(json.load(open('campaign_damage/KWLRK.../observables.json'))['_provenance'])"
 ```
 
+### Reproducing on another machine
+
+Everything needed to reproduce the study is committed, so a second machine is a clone plus an
+environment:
+
+- The code, the membrane registry (`user/membranes.py`) and the committed equilibrated target
+  membrane (`user/base/insert_peptide/membrane_bacterial.gro` and `.top`): same reference on any
+  machine, no rebuild.
+- The calibration set (`seq.txt`, `labels.csv`) and the scramble generator
+  (`tools/make_scrambles.py`), which regenerates and verifies the designed controls from their
+  parents, so the inactive class is reproducible rather than a list of opaque sequences.
+- The run parameters, all in `user/usersettings.py` under version control (`SIM_time`, the
+  timeouts, `N_REPLICAS`, `RETAIN_ALL_TRAJECTORIES`, `WRITE_XTC`), so a run is defined by the
+  repository state, not by ad-hoc edits on one machine.
+- `GMX_VERSION_EXPECT` pins the GROMACS build, and every `observables.json` records the build that
+  produced it, so a cross-machine result set is checkable rather than assumed.
+
+The one piece that is environment-specific is the Python environment. Capture it once on the
+machine that produced the results and commit it, so the next machine installs the same versions:
+
+```bash
+source .venv/bin/activate
+pip freeze > requirements.txt
+git add requirements.txt && git commit -m "env: pin Python dependencies" && git push
+```
+
+On the second machine, after cloning and loading the same GROMACS module (see Installation),
+recreate the environment with `pip install -r requirements.txt`, then run the dry run to confirm
+the chain before any production.
+
 ## The dry run
 
 Before committing a workstation to a campaign that runs for days, run the whole pipeline small.
@@ -1131,6 +1161,15 @@ export OMP_NUM_THREADS=$(python3 tools/cores.py --threads-per-rank 99 --export \
 python run.py --output_dir calibration_run
 ```
 
+To add peptides to an existing results directory without redoing the ones already measured, point
+`AMP_SEQ_FILE` at a file holding only the new sequences and use the same `--output_dir`. `run.py`
+reads `AMP_SEQ_FILE` in place of `seq.txt`, and each candidate gets its own `<SEQ>_repN`
+directories, so the earlier candidates are untouched and `calibrate.py` aggregates the whole set:
+
+```bash
+AMP_SEQ_FILE=seq_extra.txt mpirun -np $AMP_NP python -m mpi4py run.py --output_dir calibration_run
+```
+
 ### Data retention
 
 Everything the validation produces is kept on disk, so a run can be inspected and verified at any
@@ -1202,32 +1241,40 @@ et al 1997, Biochemistry 36:12869, PMID 9335545, live in full-text tables that w
 captcha-blocked). The inactive class is therefore filled with designed scrambled controls rather
 than measured peptides, and labelled as such.
 
-Each scramble keeps the exact amino-acid composition of a verified selective parent, so its length,
-side-chain charge and mean hydrophobicity are identical, and only the sequence order changes. Among
-50000 random permutations (seed 20231023, reproducible) the one with the lowest Eisenberg
-hydrophobic moment was kept, which destroys the amphipathic helical face that drives membrane
-disruption. A non-amphipathic helix of the same composition is the standard negative control for
-isolating the effect of amphipathic arrangement from composition.
+There is one scramble per active peptide, so the set is balanced: six active and six inactive. Each
+scramble keeps the exact amino-acid composition of its parent, so its length, side-chain charge and
+mean hydrophobicity are identical, and only the sequence order changes. Among 50000 random
+permutations the one with the lowest Eisenberg hydrophobic moment is kept (terminal proline
+rejected), which destroys the amphipathic helical face that drives membrane disruption. A
+non-amphipathic helix of the same composition is the standard negative control for isolating the
+effect of amphipathic arrangement from composition. The three scrambles of the lytic and remaining
+selective parents are regenerated and verified by `tools/make_scrambles.py` (seed per parent,
+reproducible on any machine); the first three were generated earlier with the same criterion.
 
 | Name | Sequence (1-letter) | Len | Charge | Parent | Hydrophobic moment (parent -> scramble) |
 |---|---|---|---|---|---|
 | scram-magainin2 | ILFKFGAFSGIGSKKGMVHNEAK | 23 | +3 | magainin 2 | 0.455 -> 0.001 |
 | scram-PGLa | ALLGKASMAKKGAAGAIVIKA | 21 | +4 | PGLa | 0.411 -> 0.001 |
 | scram-pleurocidin | TVKKAHGSHGAVYFAHKWKAGLLFG | 25 | +4 | pleurocidin | 0.362 -> 0.000 |
+| scram-magainin1 | IHKKMLFSAEAKVSIGGGFGFGK | 23 | +3 | magainin 1 | 0.489 -> 0.001 |
+| scram-melittin | IVKRRKLVLLGIAIASQWLPGKQGTT | 26 | +5 | melittin | 0.353 -> 0.001 |
+| scram-V681 | LTLTSAKSKHVTFKVKWAKSLSFAKI | 26 | +6 | V681 | 0.480 -> 0.001 |
 
 These are designed controls, not experimentally measured peptides: the expectation that they are
 inactive follows from the loss of amphipathicity, and the go/no-go itself tests whether the observed
 delta_gamma places them below the selective and lytic peptides. If any scramble unexpectedly scores
 high, that is itself a finding about the observable.
 
-Two classes for target-only damage. The go/no-go asks whether the damage observable separates
-peptides that disrupt the bacterial target from those that do not, so the six verified peptides
-(four selective and two lytic) are all **active** against the target, and the three scrambles are
-**inactive**. The selective-versus-lytic distinction was a host property (both are active on
-bacteria; they differ in what they do to a mammalian membrane), so it does not enter a target-only
-validation, and the binding-without-lysing class, which also needed the host, is out of scope. The
-`labels.csv` for the go/no-go therefore carries `active` and `inactive`; the finer selective,
-lytic and scramble origins are kept in `seq.txt` and this table for the record.
+Two classes for target-only damage, balanced six and six. The go/no-go asks whether the damage
+observable separates peptides that disrupt the bacterial target from those that do not, so the six
+verified peptides (four selective and two lytic) are all **active** against the target, and the six
+composition-matched scrambles are **inactive**. One scramble per active makes each class a boundary
+rather than a point and controls for composition peptide by peptide. The selective-versus-lytic
+distinction was a host property (both are active on bacteria; they differ in what they do to a
+mammalian membrane), so it does not enter a target-only validation, and the binding-without-lysing
+class, which also needed the host, is out of scope. `labels.csv` keeps the finer classes (selective,
+lytic, inactive), and `calibrate.py` collapses selective and lytic to one "active" rank for the
+damage go/no-go, so the test is active versus inactive while the origins stay on record.
 
 ### How many ranks and threads
 

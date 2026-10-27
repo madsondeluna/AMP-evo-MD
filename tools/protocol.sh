@@ -199,7 +199,6 @@ eval "${BUILD_CMD}"
 # a martini22 run would need the Martini 2 include set instead.
 FF_DIR="${HERE}/user/base/insert_peptide"
 for itp in martini_v3.0.0.itp martini_v3.0.0_phospholipids_v1.itp \
-           martini_v3.0.0_sterols_v1.itp \
            martini_v3.0.0_solvents_v2.itp martini_v3.0.0_ions_v1.itp; do
     if [ ! -f "${FF_DIR}/${itp}" ]; then
         echo "Missing force field file: ${FF_DIR}/${itp}" >&2
@@ -209,7 +208,7 @@ for itp in martini_v3.0.0.itp martini_v3.0.0_phospholipids_v1.itp \
 done
 # The placeholder include becomes the Martini 3 set: the core field, the phospholipids (POPE,
 # POPG and the rest), the solvents (W), and the ions (NA, CL).
-sed -i 's|#include "martini.itp"|#include "martini_v3.0.0.itp"\n#include "martini_v3.0.0_phospholipids_v1.itp"\n#include "martini_v3.0.0_sterols_v1.itp"\n#include "martini_v3.0.0_solvents_v2.itp"\n#include "martini_v3.0.0_ions_v1.itp"|' "${NAME}.top"
+sed -i 's|#include "martini.itp"|#include "martini_v3.0.0.itp"\n#include "martini_v3.0.0_phospholipids_v1.itp"\n#include "martini_v3.0.0_solvents_v2.itp"\n#include "martini_v3.0.0_ions_v1.itp"|' "${NAME}.top"
 # NA+ -> NA and CL- -> CL in both the topology and the structure. The replacements are the same
 # width as what they replace, so the fixed-column .gro stays aligned.
 sed -i -e 's/NA+/NA /g' -e 's/CL-/CL /g' "${NAME}.top" "${NAME}_raw.gro"

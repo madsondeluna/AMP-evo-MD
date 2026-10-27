@@ -10,30 +10,105 @@ are theirs. What changed is the axis of comparison and the objective.
 
 ![Pipeline overview](docs/pipeline.svg)
 
+This fork optimises one thing: disruption of a bacterial target membrane. A genetic algorithm
+proposes peptide sequences, each is simulated on the target membrane with coarse-grained
+molecular dynamics, and the induced leaflet tension (`delta_gamma`) scores how much the peptide
+destabilises it. The study was originally dual-objective (damage the bacterial membrane and spare
+a mammalian host); it was narrowed to the target alone after a class-validation run, for the
+reasons in [Scope](#scope-why-this-is-target-only-damage) below.
+
+## Contents
+
+- [Scope: why this is target-only damage](#scope-why-this-is-target-only-damage)
+- [What problem this addresses](#what-problem-this-addresses)
+- [The membrane system](#the-membrane-system)
+- [The peptide model: imposed helix and search space](#the-peptide-model-imposed-helix-and-search-space)
+- [Order of work](#order-of-work)
+- [Installation on an Ubuntu workstation](#installation-on-an-ubuntu-workstation)
+- [The dry run](#the-dry-run)
+- [Running it](#running-it)
+- [Logs and diagnostics](#logs-and-diagnostics)
+- [Analysis and figures](#analysis-and-figures)
+- [Troubleshooting](#troubleshooting)
+- [Limitations to state rather than discover](#limitations-to-state-rather-than-discover)
+- [Changes to the upstream code](#changes-to-the-upstream-code)
+- [Requirements](#requirements)
+- [Layout](#layout)
+- [References](#references)
+
+## Scope: why this is target-only damage
+
+This study optimises a single objective: how strongly a peptide disrupts the bacterial target
+membrane. It does not model selectivity against a host membrane. That is a deliberate narrowing
+from the original dual-objective design, and the reasons are worth stating plainly because they
+shape every result.
+
+The original plan had two membranes: a bacterial target to damage and a mammalian host to spare,
+with selectivity as the second objective. A first class-validation run was built to check that
+the observables separate peptides whose behaviour is already known: 9 peptides (4 selective, 2
+lytic, 3 designed-scramble inactive controls), one replica each, 200 ns on both membranes. The
+observables did not separate the classes. Pairwise concordance with the labels was 0.35 for the
+damage objective and 0.42 for binding, both at or below the 0.5 of a coin toss.
+
+The diagnosis had two distinct parts:
+
+- **Active versus inactive could be separated, but not by the scored observable.** Insertion
+  depth, orientation and peptide-lipid interaction energy did distinguish the active peptides
+  (which insert and orient) from the inactive scrambles (which sit peripherally). The scored
+  damage observable, `delta_gamma`, did not: at one replica and 200 ns its error was comparable
+  to the signal, and two near-identical magainin variants gave very different values, which is
+  proof that single-trajectory sampling noise dominated rather than any property of the sequence.
+- **Selective versus lytic could not be separated at all, and this was structural, not
+  statistical.** On the pure-POPC host the selective peptides inserted just as strongly as the
+  lytic ones. The reason is physical: hydrophobic Lennard-Jones insertion (on the order of
+  -600 kJ/mol of peptide-lipid energy) dominates the weak anionic electrostatic preference (on
+  the order of -50 kJ/mol of Coulomb), so an amphipathic helix inserts into any fluid bilayer,
+  POPC or POPE:POPG alike. The molecular determinant of real AMP selectivity is cholesterol
+  (mammalian membranes carry roughly 30 to 40 percent, bacterial membranes none), which rigidifies
+  the host and resists insertion. A pure-POPC host has no such determinant, so it cannot reproduce
+  selectivity. Building a trustworthy cholesterol host in Martini 3 was not straightforward:
+  `insane`, the membrane builder, is a Martini 2 tool whose cholesterol beads do not match the
+  Martini 3 sterol model, so a POPC:CHOL build could not be trusted without separate validation.
+
+Given that, the study was scoped to the target membrane alone. This is the honest and reproducible
+choice: one fully controlled membrane instead of a two-membrane model whose second half was known
+to be wrong. The consequences, stated so they are not discovered later:
+
+- A single damage objective optimises **potency, not therapeutic selectivity**. Maximising
+  bacterial-membrane disruption tends toward highly hydrophobic, cationic, strongly lytic peptides,
+  which in reality are often haemolytic. Nothing in this pipeline penalises host toxicity.
+- **Toxicity and selectivity are out of scope here and are future work.** They must be handled
+  downstream, for example by a haemolysis or toxicity predictor, or experimentally, and ultimately
+  by a validated cholesterol-containing host (POPC:CHOL or POPC:DPSM:CHOL) recalibrated from
+  scratch and a selectivity term restored to the objective.
+- The host machinery is **archived, not deleted**. The host entry is kept commented in
+  `user/membranes.py` and the binding objective remains in the code, so selectivity can be restored
+  once a trustworthy host exists.
+
+The validation was then redesigned around this scope: a 2-class separation (active against the
+bacterial target versus inactive), three independent replicas per peptide, described in
+[Order of work](#order-of-work) and the running steps below.
+
 ## What problem this addresses
 
 The original compares one membrane composition held at two areas, and measures how much the
 peptide reduces the work needed to stretch the leaflet. That difference is curvature sensing.
 
-Here the axis is composition rather than tension: one bacterial membrane mimic and one host
-mimic, both at constant area. The same measured quantity means something different on that
-axis, and two objectives are built from it.
+Here the quantity is the same (surface tension at constant area) but it is read on one bacterial
+target membrane and turned into a single objective: induced leaflet strain, used as a damage
+proxy. A positive strain means the peptide destabilises the leaflet it occupies. There is no
+second membrane and no selectivity term (see [Scope](#scope-why-this-is-target-only-damage)).
 
 | | original | this fork |
 |---|---|---|
-| compared | two tension states of one membrane | two compositions |
+| compared | two tension states of one membrane | one bacterial target composition |
 | ensemble | constant area | constant area, unchanged |
 | measured | surface tension, insertion depth | surface tension, insertion depth, peptide-lipid interaction energy |
-| objective | curvature sensing free energy | induced leaflet strain (damage), or partitioning selectivity (binding) |
+| objective | curvature sensing free energy | induced leaflet strain (damage) on the target |
 
-### The two objectives
+### The objective: membrane damage
 
-Both read the same `observables.json`, produced by the same pair of production runs. Switching
-between them costs no simulation, and re-scoring a finished campaign under the other is a
-post-processing step rather than a second campaign. That is the reason they live in one
-repository.
-
-**damage** maximises `delta_gamma` on the target membrane, with a hinge penalty on the host.
+The objective is **damage**: maximise `delta_gamma` on the bacterial target membrane.
 `delta_gamma = gamma(free) - gamma(with peptide)` at constant area, so a positive value means
 the peptide relieves tension in the leaflet it occupies, which is the same statement as the
 peptide generating leaflet strain. This is a damage observable rather than a binding one: the
@@ -42,15 +117,21 @@ induces it, and that membrane-binding peptides therefore lower the energetic cos
 curved interface of a toroidal pore. Curvature selectivity needed the derivative of this
 quantity with respect to area; damage does not, so one area state suffices.
 
-**binding** maximises a partitioning proxy on the target relative to the host. The proxy is
-configurable because it should be chosen from the calibration run rather than assumed. None of
-the options is the quantity one actually wants, which is the partitioning free energy by
-thermodynamic integration; that does not fit inside the loop and is reserved for re-ranking the
-survivors, exactly as in the source paper. `BINDING_proxy` is either `interaction_energy` or
-`depth`; `combined` is refused at startup because it z-scores a candidate against its own
-generation and nothing in the pipeline collects the statistics that needs.
+With the host archived (see [Scope](#scope-why-this-is-target-only-damage)), the damage objective
+has no host term: `user/modules/fitness_damage.py` applies its hinge host penalty only when a
+host membrane is registered, and none is, so the fitness is `delta_gamma` on the target alone.
 
-Both objectives are gated on the **orientation factor** (Eq. 3 of the source paper), a number in
+A second objective, **binding** (a partitioning proxy, target relative to host), remains in the
+code (`user/modules/fitness_binding.py`, `OBJECTIVE = "binding"`) but is not used in this study:
+it needs the host that was archived. It is left in place so selectivity can be restored later.
+The three standing limitations of the damage observable, documented in `fitness_damage.py`, are
+the dilute peptide-to-lipid limit (one peptide per roughly 200 lipids, whereas AMPs act
+cooperatively), that generating tension is necessary for rupture but not sufficient (nothing knows
+where the rupture threshold is), and that the constant-area ensemble is load-bearing (under a
+constant-tension barostat the area would respond and the observable would vanish, so `Pcoupltype`
+must not change without replacing the observable).
+
+The objective is gated on the **orientation factor** (Eq. 3 of the source paper), a number in
 [0, 1] measuring whether the peptide was at the interface at all. Two properties of it are worth
 knowing, because both were wrong and both were invisible:
 
@@ -77,12 +158,15 @@ The transferable asset is not the fitness function, which is specific to curvatu
    an alchemical calculation. That ceiling constrains every choice of observable here.
 2. Maximising a single physical observable returns its degenerate extreme, not a usable
    peptide. The source paper set out to optimise curvature sensing and obtained the optimal
-   binder: a sequence so hydrophobic it would aggregate out of solution. The analogous failure
-   here differs by objective. Maximising damage reproduces the hydrophobic extreme directly.
-   Maximising binding selectivity does not, because hydrophobic insertion raises affinity for
-   both membranes and largely cancels in the difference, leaving electrostatic discrimination;
-   its extreme is instead a maximally cationic peptide, selective, weakly potent and
-   salt-sensitive. A different failure, still a failure.
+   binder: a sequence so hydrophobic it would aggregate out of solution. Maximising damage, the
+   objective here, reproduces that hydrophobic extreme directly, which is the same force that
+   makes a potent membrane disruptor haemolytic. This is why the search carries a hydrophobic
+   fraction cap, and why target-only damage optimises potency rather than selectivity (see
+   [Scope](#scope-why-this-is-target-only-damage)): without a host term, nothing opposes the
+   hydrophobic extreme except that cap. (The archived binding objective fails differently, toward
+   a maximally cationic, weakly potent, salt-sensitive peptide, because hydrophobic insertion
+   cancels in a target-minus-host difference and leaves electrostatics; a different failure, still
+   a failure, and a reason selectivity needs a trustworthy host before it is optimised.)
 3. The useful regime is therefore a window on the objective, and the window has to be
    calibrated against peptides whose behaviour is known experimentally. Without that
    calibration the output is a ranking without a scale.
@@ -97,7 +181,7 @@ precisely rather than discovering later.
 They model an effectively infinite toroidal pore as a lipid stripe, take the box size along the
 rim as a collective variable, and obtain the line tension from the slope of the free-energy
 profile over three umbrella-sampling windows. Their fitness is the relative reduction of that
-line tension. The cost is comparable to the two production runs used here, which disposes of the
+line tension. The cost is comparable to the production runs used here, which disposes of the
 assumption that pore energetics are too expensive for a genetic algorithm: what was missing was
 the collective variable, not the compute.
 
@@ -119,34 +203,35 @@ What does not transfer, and why:
   induced leaflet strain as a damage proxy. Pore formation and pore stabilisation may simply be
   different steps, weakly correlated or anticorrelated. The calibration run settles it cheaply.
 
-What this fork adds is the step their conclusions leave open: they simulate peptides already
-placed at the pore rim, so membrane recruitment and selectivity are not part of the calculation,
-and they flag explicitly that whether their anionic peptides can target an anionic membrane
-remains to be established. Recruitment against a host membrane is what the binding objective here
-measures. The tension between the two steps, cationic for recruitment and anionic for pore-rim
-stabilisation, is the interesting part rather than a contradiction to resolve.
+A step their conclusions leave open is membrane recruitment and selectivity: they simulate
+peptides already placed at the pore rim, and flag explicitly that whether their anionic peptides
+can target an anionic membrane remains to be established. Recruitment against a host membrane is
+what the archived binding objective was meant to measure. With the host descoped to future work,
+this fork does not address that step either; the tension between the two requirements (cationic
+for recruitment, anionic for pore-rim stabilisation) is noted here as the interesting question a
+selectivity-capable successor would face.
 
 Adopted from their methodology, all of it force-field independent: neutral peptide termini
 (`martinize2 -nt`, since charged termini add an orientation-dependent contribution to the
 measured surface tension that has nothing to do with the sequence), explicit physiological salt
 in the membrane build, and the exclusion of isoleucine on the grounds documented in
-`user/usersettings.py`. Replicate evaluations per candidate are not yet implemented; the genetic
-algorithm's rerun averaging covers only the elites.
+`user/usersettings.py`. Replicate evaluations per candidate are used in the class-validation run
+(three independent replicas per peptide, averaged, with the between-replica spread as the
+uncertainty); in a GA campaign the genetic algorithm's rerun averaging covers the elites.
 
 ## The membrane system
 
-The target is a Gram-negative inner-membrane mimic: **POPE:POPG in a 3:1 ratio** (70:30), built
-with the Martini 3 coarse-grained force field and non-polarisable water. POPG makes the bilayer
-anionic, which is the property antimicrobial peptides discriminate on. Cardiolipin (CDL2) belongs
-in a faithful inner-membrane mimic and is what makes it most strongly anionic, but its Martini 3
-parameters are not shipped here, so the first campaigns run on POPE:POPG and add cardiolipin once
-its parameters are in place. The host is a mammalian-membrane mimic, used by the binding
-objective's selectivity term and by the damage objective's host penalty: here it is a pure POPC
-bilayer, zwitterionic and neutral, the common minimal Martini proxy for a mammalian membrane,
-built the same way in the same 8 x 8 nm box. The first-order selectivity signal is the charge
-contrast between the anionic bacterial target and the neutral host, which POPE:POPG against POPC
-already captures; cholesterol and sphingomyelin add realism (rigidity, resistance to lysis) and
-are deferred with their Martini 3 parameters.
+There is one membrane: a Gram-negative inner-membrane mimic, **POPE:POPG in a 3:1 ratio** (70:30),
+built with the Martini 3 coarse-grained force field and non-polarisable water. POPG makes the
+bilayer anionic, which is the property antimicrobial peptides discriminate on. Cardiolipin (CDL2)
+belongs in a faithful inner-membrane mimic and is what makes it most strongly anionic, but its
+Martini 3 parameters are not shipped here, so the campaigns run on POPE:POPG and add cardiolipin
+once its parameters are in place.
+
+A mammalian host membrane (a pure-POPC bilayer in the original design) is **archived, not used**:
+it could not reproduce selectivity (see [Scope](#scope-why-this-is-target-only-damage)), its entry
+is kept commented in `user/membranes.py`, and a realistic host needs cholesterol and sphingomyelin
+whose Martini 3 parameters and a trustworthy build are future work.
 
 Size, as built:
 
@@ -163,12 +248,12 @@ Size, as built:
 
 ![Membrane lipids and topology](docs/membranes.png)
 
-The three lipids in all-atom and Martini 3 coarse-grained form, and the two membranes' composition
-and charge balance. They share tails, glycerol and phosphate; only the head bead differs, and that
-is what sets the charge. POPG is anionic because its glycerol head (GL0) carries no cation to
-cancel the phosphate, so each POPG is -1; POPE (NH3, +1) and POPC (NC3, +1) are zwitterionic and
-net neutral. The anionic bacterial surface against the neutral host is the selectivity contrast a
-cationic antimicrobial peptide discriminates on. Regenerate the figure with
+The lipids in all-atom and Martini 3 coarse-grained form, and the target membrane's composition
+and charge balance (POPC appears as the archived host lipid). They share tails, glycerol and
+phosphate; only the head bead differs, and that is what sets the charge. POPG is anionic because
+its glycerol head (GL0) carries no cation to cancel the phosphate, so each POPG is -1; POPE (NH3,
++1) and POPC (NC3, +1) are zwitterionic and net neutral. The anionic POPE:POPG surface is what a
+cationic antimicrobial peptide is recruited to and disrupts. Regenerate the figure with
 `python docs/make_membranes_figure.py` (needs `matplotlib`).
 
 The equilibrated structure is produced once at zero tension and reused for every candidate (see
@@ -189,36 +274,41 @@ no new simulation.
 | insertion depth | d_mem | how deep the peptide sits relative to the bilayer midplane | trajectory analysis |
 | orientation factor | | a cosine window in [0, 1]: whether the peptide was at the interface at all | averaged over frames, not taken at the mean depth |
 
-`delta_gamma` drives the damage objective; the interaction energy and depth are the candidate
-proxies for the binding objective; the orientation factor gates both, rejecting a candidate that
-left the interface rather than scaling its score.
+`delta_gamma` drives the damage objective. The interaction energy and insertion depth are not
+scored here (they were the archived binding proxies), but they are kept in every `observables.json`
+as diagnostics: in the class-validation run they separated active from inactive peptides more
+cleanly than `delta_gamma` did, so they are the first candidates if the damage observable needs
+replacing. The orientation factor gates the objective, rejecting a candidate that left the
+interface rather than scaling its score.
 
-### The same peptide on both membranes
+### One target membrane, replicate runs
 
-The same peptide is simulated on both membranes. For each candidate the peptide is built once,
-then inserted into the bacterial target and into the host and run through its own production, so
-every observable above exists once per membrane: `delta_gamma` on the target and on the host, the
-interaction energy on each, and so on. The objective then combines the two into a single fitness.
-Damage maximises the target's `delta_gamma` while a hinge penalty holds down any `delta_gamma` on
-the host; binding maximises the target-minus-host difference of the partitioning proxy. Both are
-selectivity statements: a useful antimicrobial should damage or bind the bacterial membrane and
-spare the mammalian one.
+Each candidate is simulated on the one registered membrane, the bacterial target. The peptide is
+built once, inserted into the target, and run through production, so every observable above exists
+once per run: `delta_gamma`, the interaction energy, the insertion depth and the orientation
+factor. The fitness is the target's `delta_gamma` (gated by the orientation factor); there is no
+host term because no host is registered. A candidate therefore costs one production run per
+replica, rather than the two-per-candidate of the original dual-membrane design.
 
-How many production runs a candidate costs follows from this. With both membranes registered it is
-two, one per membrane. The cheapest damage run registers only the bacterial target and sets the
-host penalty to zero, so a candidate is a single production run; that is the learning-scale
-configuration in [Resource planning](#resource-planning). The host is added back the moment
-selectivity matters, as the damage host penalty or as the full binding objective.
+Because `delta_gamma` from a single 200 ns trajectory was too noisy to rank peptides (the
+class-validation run showed its error comparable to the between-class signal, and two near-identical
+magainin variants gave very different values), the validation runs **three independent replicas**
+per peptide. The per-peptide value is the mean over replicas and the uncertainty is the
+between-replica spread, which is the honest error bar a single trajectory cannot give. Replica
+independence currently comes from the random velocity seed (`gen_seed = -1` in the mdp), since the
+insertion geometry is deterministic; varying the peptide placement and orientation per replica is
+a planned refinement. Keeping trajectories on disk for all replicas is covered under
+[Data retention](#data-retention).
 
 ### How it compares to the source papers
 
 | | van Hilten 2023 (source) | Biriukov and Vacha 2026 (Evo-MD-FE) | this fork (AMP-evo-MD) |
 |---|---|---|---|
-| membrane | POPC, single component | POPE:POPG 3:1 | POPE:POPG 3:1 target, POPC host |
+| membrane | POPC, single component | POPE:POPG 3:1 | POPE:POPG 3:1 target (host archived) |
 | force field | Martini 3 | Martini 2.2, polarisable water | Martini 3, non-polarisable water |
 | geometry | flat bilayer, two tension states | lipid stripe with a pore rim | flat bilayer, constant area |
-| observable | curvature-sensing free energy | pore line tension, umbrella sampling | induced leaflet strain, or partitioning selectivity |
-| the GA optimises | curvature sensing | line-tension reduction | membrane damage, or binding selectivity |
+| observable | curvature-sensing free energy | pore line tension, umbrella sampling | induced leaflet strain on the target |
+| the GA optimises | curvature sensing | line-tension reduction | membrane damage (target only) |
 
 The composition matches Biriukov and Vacha; the force field and water model match van Hilten. The
 reasons for keeping Martini 3 non-polarisable water, rather than importing their polarisable
@@ -331,22 +421,25 @@ The calibration run comes first, and it uses no genetic algorithm.
    provenance. Agreement says the build, equilibration, production and extraction chain is sound
    before any of it is used on a composition nobody has measured.
    See [Step 1a](#step-1a-reproduce-the-source-papers-membrane-first).
-2. **Build and calibrate the working membranes.** Each composition needs its own reference
+2. **Build and calibrate the target membrane.** The composition needs its own reference
    measurements, taken on the peptide-free membrane: box area, free-membrane surface tension,
    and bilayer thickness. These are not transferable between compositions. The procedure is
-   documented at the top of `user/membranes.py`. Until both the numbers are filled in and the
+   documented at the top of `user/membranes.py`. Until the numbers are filled in and the
    equilibrated `.gro` and `.top` are copied into place, anything that would run a simulation
    refuses to start. Those are two separate steps and the second is the one usually missed.
    `calibrate.py` does not check either, because re-scoring an existing result set does not
-   touch the membranes.
-3. **Measure the calibration set.** Copy `seq.txt.example` to `seq.txt` and fill it with a few
-   dozen peptides with known MIC and haemolysis, then run `STATE = 1` in `run.py`. Prioritise
-   coverage of the regimes over potency: an inactive peptide and a non-selective lytic one are
-   what fix the ends of the scale, and a binding-without-lysis control is what tests whether the
-   damage observable is measuring what it claims.
-4. **Check whether the observables separate the classes.** `calibrate.py` scores those results
-   under either objective and reports pairwise concordance against the labels. This is the
-   go/no-go: an optimiser cannot recover a signal that is not in the observable.
+   touch the membrane. The bacterial target ships already calibrated in this repository; only a
+   new composition needs this step.
+3. **Measure the calibration set, with replicas.** Fill `seq.txt` with peptides of known
+   activity against the target, then run `STATE = 1` in `run.py` with three replicas per peptide.
+   For target-only damage the classes are two: active (damages the bacterial membrane) and
+   inactive. The actives fix one end of the scale and the inactive controls fix the other;
+   replicas are what make the per-peptide value trustworthy, since a single trajectory was too
+   noisy to rank (see [One target membrane, replicate runs](#one-target-membrane-replicate-runs)).
+4. **Check whether the observable separates active from inactive.** `calibrate.py` scores those
+   results under the damage objective and reports pairwise concordance against the labels. This is
+   the go/no-go: an optimiser cannot recover a signal that is not in the observable, so a no-go
+   means revisiting the observable or the sampling before any campaign, not running one.
 5. **Only then run a campaign.** `run.py` with `STATE = 0`.
 
 ## Installation on an Ubuntu workstation
@@ -802,18 +895,16 @@ Nothing else runs until this is done. `user/membranes.py` raises `UncalibratedMe
 deliberate: a plausible placeholder would propagate into every fitness value in the campaign
 while looking entirely reasonable.
 
-**Both reference membranes build entirely from the Martini 3 lipids shipped in `user/base/`**,
-which cover the phospholipids, the ions and the solvents. The bacterial target is POPE:POPG 3:1
-and the host is pure POPC; neither needs anything added. Two lipids that would add realism are
-deferred because their Martini 3 parameters are distributed separately: cardiolipin (`CDL0`,
-`CDL1`, `CDL2`), which makes a Gram-negative inner membrane more strongly anionic, and cholesterol
-(`CHOL`) with sphingomyelin (`DPSM`), which stiffen a mammalian host and raise its resistance to
-lysis. The simplification is deliberate: the first-order selectivity signal is the charge contrast
-between the anionic bacterial target and the neutral host, which POPE:POPG against POPC already
-captures. `tools/membrane.py plan` checks that every lipid in a composition is parameterised and
-stops with the list before `insane` builds a structure that `grompp` would refuse, so adding
-cardiolipin or cholesterol later is a matter of dropping in their parameter files and changing the
-composition string.
+**The target membrane builds entirely from the Martini 3 lipids shipped in `user/base/`**, which
+cover the phospholipids, the ions and the solvents. The bacterial target is POPE:POPG 3:1 and
+needs nothing added. Cardiolipin (`CDL0`, `CDL1`, `CDL2`), which would make a Gram-negative inner
+membrane more strongly anionic, is deferred because its Martini 3 parameters are distributed
+separately. A mammalian host (cholesterol `CHOL` and sphingomyelin `DPSM` over POPC) is not built
+here at all: it is archived (see [Scope](#scope-why-this-is-target-only-damage)). `tools/membrane.py
+plan` checks that every lipid in a composition is parameterised and stops with the list before
+`insane` builds a structure that `grompp` would refuse, so adding cardiolipin later, or a sterol
+host when selectivity is taken up again, is a matter of dropping in the parameter files and
+changing the composition string.
 
 ```bash
 # First pass. Prints the plan and the insane command, then stops.
@@ -842,24 +933,21 @@ membrane the candidates insert into, so the production reference runs on it dire
 PASS=2 AUTO=1 ./tools/protocol.sh bacterial "POPE:70,POPG:30" target
 ```
 
-Repeat for the host membrane:
-
-```bash
-tools/build_reference_membranes.sh host                   # equilibrate (pass 1)
-PASS=2 AUTO=1 ./tools/protocol.sh host "POPC:100" host     # production reference
-```
+There is no host membrane to build: it is archived (see
+[Scope](#scope-why-this-is-target-only-damage)). When selectivity is taken up again, the host is
+built the same way, with a sterol-containing composition and its own calibration.
 
 Why not rebuild. The production ensemble is constant-area, so the box has to sit at the
 composition's equilibrium area, otherwise the membrane is pre-stressed and its free surface
 tension is not zero. The zero-tension equilibration already put the box there, so the equilibrated
 membrane satisfies that condition with no rebuild. And `delta_gamma` is a difference measured at
 one fixed box, `gamma(free) - gamma(with peptide)`, so any small residual baseline tension cancels
-between the reference and the candidates, which use the same membrane. The only thing a rebuild to
-a common 8.0 x 8.0 nm box buys is area-matching two membranes, which matters when their natural
-areas differ a lot. Here they do not: POPE:POPG equilibrates near 0.63 nm2 per lipid and POPC near
-0.64, so each membrane is used at its own equilibrium area. The 8.0 nm rebuild is kept as an option
-(rebuild from `plan_pass2.txt`, re-equilibrate, then `PASS=2`) for a later composition where the
-areas diverge, such as one with cholesterol, which condenses its neighbours.
+between the reference and the candidates, which use the same membrane. With one membrane, the
+target, there is nothing to area-match, so the membrane is simply used at its own equilibrium
+area. The only reason a rebuild to a common box would matter is comparing two membranes whose
+natural areas differ a lot, which is a concern for a later composition such as a cholesterol host
+(cholesterol condenses its neighbours); the 8.0 nm rebuild path (rebuild from `plan_pass2.txt`,
+re-equilibrate, then `PASS=2`) is kept as an option for that case.
 
 Useful overrides:
 
@@ -889,29 +977,26 @@ copy the equilibrated structures into place:
 ```bash
 cp prep/bacterial/bacterial_eq.gro user/base/insert_peptide/membrane_bacterial.gro
 cp prep/bacterial/bacterial.top    user/base/insert_peptide/membrane_bacterial.top
-cp prep/host/host_eq.gro           user/base/insert_peptide/membrane_host.gro
-cp prep/host/host.top              user/base/insert_peptide/membrane_host.top
 
 python -c "import user.membranes as m; m.require_all_calibrated(); print('membranes calibrated')"
 ```
 
 ### The equilibrated membrane is a committed standard
 
-The equilibrated membranes are produced once, at zero tension for a pinned length, and the
-structures are committed to the repository, so every machine starts from the identical membranes
+The equilibrated membrane is produced once, at zero tension for a pinned length, and the
+structure is committed to the repository, so every machine starts from the identical membrane
 instead of re-equilibrating. The recipe is versioned in `tools/build_reference_membranes.sh`,
-which pins each composition, the box, the salt and the equilibration length, and builds both
-reference membranes (the POPE:POPG bacterial target and the POPC host) by default; name one to
-build just it. **The standard equilibration is 500 ns** (the `protocol.sh` default of 200 ns is a
-floor for exploratory builds).
+which pins the composition, the box, the salt and the equilibration length, and builds the
+POPE:POPG bacterial target (`bacterial`). **The standard equilibration is 500 ns** (the
+`protocol.sh` default of 200 ns is a floor for exploratory builds).
 
 ```bash
 source ~/amp-env.sh
 cd ~/AMP-evo-MD
 
 # In tmux or screen if either is installed (reattachable). Otherwise nohup, which still survives a
-# dropped connection but cannot be reattached. EQUIL_NS=500 is pinned inside the recipe. Name
-# 'bacterial' to build only the target; drop the name to build the host as well.
+# dropped connection but cannot be reattached. EQUIL_NS=500 is pinned inside the recipe. Only the
+# bacterial target is built; the host is archived (see Scope).
 nohup tools/build_reference_membranes.sh bacterial > ~/equil500.log 2>&1 &
 tail -f ~/equil500.log      # Ctrl-c stops watching, not the run
 ```
@@ -929,9 +1014,6 @@ commit them, so the membrane travels with the code:
 ```bash
 cp prep/bacterial/equil.gro     user/base/insert_peptide/membrane_bacterial.gro
 cp prep/bacterial/bacterial.top user/base/insert_peptide/membrane_bacterial.top
-# and, when the host is built, the same for it:
-cp prep/host/equil.gro          user/base/insert_peptide/membrane_host.gro
-cp prep/host/host.top           user/base/insert_peptide/membrane_host.top
 ```
 
 Two senses of reproducibility, both covered. The committed `.gro` gives the **same structure** on
@@ -954,8 +1036,8 @@ resume days later.
 
 ### Reference membranes on record
 
-Both reference membranes are equilibrated, calibrated, and committed under
-`user/base/insert_peptide/`, and this repository ships them calibrated: the registry in
+The target membrane is equilibrated, calibrated, and committed under
+`user/base/insert_peptide/`, and this repository ships it calibrated: the registry in
 `user/membranes.py` carries the measured constants, so `require_all_calibrated()` passes on a fresh
 checkout. (This is a deliberate choice for this study; the upstream convention is to ship the
 registry uncalibrated and fill it locally.)
@@ -963,39 +1045,36 @@ registry uncalibrated and fill it locally.)
 | Membrane | Role | Composition | Held box x=y (nm) | Held area (nm^2) | APL (nm^2) | Thickness (nm) | Reference surface tension (bar nm) |
 |---|---|---|---|---|---|---|---|
 | bacterial | target | POPE:POPG 70:30 (140:58) | 7.888 | 62.226 | 0.629 | 3.93 | -2.62 +/- 11.0 |
-| host | host | POPC (200) | 8.141 | 66.277 | 0.663 | 3.87 | -9.55 +/- 4.10 |
 
-How the reference surface tension was made tensionless:
+A host membrane was calibrated under the original dual-membrane design (pure POPC, reference
+surface tension -9.55 +/- 4.10 bar nm) and is now archived with the rest of the host machinery
+(see [Scope](#scope-why-this-is-target-only-damage)); its entry is commented in `user/membranes.py`.
+
+How the reference surface tension was made tensionless (the account keeps both membranes because
+the host calibration is where the lesson showed up):
 
 - The semi-isotropic equilibration relaxes the box to zero tension by construction, so its surface
   tension is ~0 and does not by itself show whether the constant-area production reference is
   tensionless. The gate that matters is the production reference tension.
 - A first production reference held the area at the equilibration's final-frame box, which sat ~1%
   off each membrane's equilibrium area (ordinary fluctuation). The bilayer area-compressibility
-  modulus is high, so ~1% area became tens of bar nm: +63 bar nm (bacterial) and -26 bar nm (host),
-  both failing the tensionless gate. A pre-stressed bilayer changes how a peptide perturbs it, and
-  the two signs were opposite, which would have inflated the apparent selectivity. The delta_gamma
-  baseline cancels only for small residuals; +63 and -26 are not small.
+  modulus is high, so ~1% area became tens of bar nm: +63 bar nm (bacterial) and -26 bar nm (the
+  archived host), both failing the tensionless gate. A pre-stressed bilayer changes how a peptide
+  perturbs it. The delta_gamma baseline cancels only for small residuals; +63 and -26 are not small.
 - Fix: hold the production at the equilibrium area. The bacterial membrane needed a ~1% compression,
   which is stable, so it was reached by rescaling the box (`gmx editconf -scale`). The host needed a
   ~1% expansion, which under-densifies the bilayer and crashed a direct production ("atoms moved too
   far between domain decomposition steps"); it was instead reached by extracting a real equilibrated
   frame from `equil.xtc` whose box was already at the equilibrium area (the 489 ns frame), which has
-  the correct density. The committed structures are these equilibrium-area versions.
-- Result: both references are tensionless within the method's noise, -2.62 +/- 11.0 (bacterial) and
-  -9.55 +/- 4.10 (host) bar nm, down from +63 / -26, with small, same-sign residuals that cancel in
-  delta_gamma without biasing selectivity. `tools/membrane.py calibrate` emitted the constants, now
-  in `user/membranes.py`.
-- Lesson for a later membrane: a compression can be rescaled in place, but an expansion should come
-  from a real trajectory frame at the target area, not from scaling, so the bilayer keeps its
-  density.
-- Equilibration drift (a separate check): over the last 250 ns the area drift is +0.55% (bacterial)
-  and +0.25% (host), both flat (`--drift-fraction 0.5` assesses this over the last half, not the
-  short averaging tail). Both membranes are equilibrated; the issue above was the held production
-  area, not equilibration.
-- The committed host is pure POPC, a neutral zwitterionic membrane, not the sterol-containing
-  POPC:DPSM:CHOL erythrocyte mimic in the original notes; without the sterol fraction it is a generic
-  neutral host, and upgrading it to the sterol composition is a planned step.
+  the correct density. The committed bacterial structure is this equilibrium-area version.
+- Result: the bacterial reference is tensionless within the method's noise, -2.62 +/- 11.0 bar nm,
+  down from +63. `tools/membrane.py calibrate` emitted the constants, now in `user/membranes.py`.
+- Lesson for a later membrane (for example a cholesterol host when selectivity is taken up again):
+  a compression can be rescaled in place, but an expansion should come from a real trajectory frame
+  at the target area, not from scaling, so the bilayer keeps its density.
+- Equilibration drift (a separate check): over the last 250 ns the bacterial area drift is +0.55%,
+  flat (`--drift-fraction 0.5` assesses this over the last half, not the short averaging tail). The
+  membrane is equilibrated; the issue above was the held production area, not equilibration.
 
 Two operational notes for the QC tooling:
 
@@ -1018,17 +1097,18 @@ cp seq.txt.example seq.txt
 
 One sequence per line, one-letter codes, blank lines and `#` comments ignored. The file is read
 relative to the repository, not to the directory you launch from, so a campaign run out of a
-scratch directory still finds it. The template explains what the set has to contain to be worth
-running: four classes, several peptides each, including peptides that bind without lysing, which
-is the class usually left out and the one both objectives can most easily mistake for a hit.
+scratch directory still finds it. For target-only damage the set has two classes: peptides known
+to be active against the bacterial target, and inactive controls. Run three replicas per peptide,
+so the per-peptide value is a mean with a between-replica error bar rather than one noisy
+trajectory (see [One target membrane, replicate runs](#one-target-membrane-replicate-runs)).
 
-`WRITE_XTC` does not need changing for this. It does not control whether the trajectory is
-written, only whether it is kept: `production.py` always writes the `.xtc` into the simulation's
-temporary directory, which is where the insertion-depth analysis reads it from, and the flag
-decides whether that file is then copied into the output directory. Set it `True` only if you
-want to inspect the calibration trajectories afterwards. A campaign must have it `False`, which
-`run.py` enforces, because keeping a trajectory per candidate across thousands of evaluations
-fills a disk.
+`WRITE_XTC = True` for the validation, so every replica's trajectory is kept on disk for
+inspection (see [Data retention](#data-retention)). The flag does not control whether the
+trajectory is written, only whether it is kept: `production.py` always writes the `.xtc` into the
+simulation's temporary directory, which is where the insertion-depth analysis reads it from, and
+the flag decides whether that file is copied into the output directory. `run.py` refuses
+`WRITE_XTC = True` under `STATE = 0` (a campaign), because keeping a trajectory for every one of
+thousands of candidates fills a disk; decide the campaign retention policy before switching.
 
 With MPI, using the layout `amp-env.sh` computed:
 
@@ -1045,6 +1125,20 @@ export OMP_NUM_THREADS=$(python3 tools/cores.py --threads-per-rank 99 --export \
                          | sed -n 's/export OMP_NUM_THREADS=//p')
 python run.py --output_dir calibration_run
 ```
+
+### Data retention
+
+Everything the validation produces is kept on disk, so a run can be inspected and verified at any
+time: the per-candidate `observables.json`, the logs, and (with `WRITE_XTC = True`) every replica's
+production trajectory. For the validation this is a few GB (9 peptides times 3 replicas times one
+200 ns trajectory each), which is cheap against the value of being able to re-examine any run.
+
+A GA campaign is a different scale. Thousands of candidates, each with replicas and a 200 ns
+trajectory, can reach terabytes, which is why `run.py` refuses `WRITE_XTC = True` under `STATE = 0`
+until a retention policy is chosen. The options are keep everything (only if the disk allows it),
+keep the trajectories of the top-N candidates, or keep downsampled trajectories; the observables
+and logs are kept regardless, so a campaign is always reconstructable at the observable level even
+when trajectories are pruned. Decide this with the disk numbers in hand before starting a campaign.
 
 ### The calibration set used in this study
 
@@ -1110,12 +1204,14 @@ inactive follows from the loss of amphipathicity, and the go/no-go itself tests 
 delta_gamma places them below the selective and lytic peptides. If any scramble unexpectedly scores
 high, that is itself a finding about the observable.
 
-Class still unfilled, binds without lysing: no clean alpha-helical example qualifies, since the
-classic non-lytic translocators (buforin II, cell-penetrating peptides) depend on a proline hinge or
-are not helical and are excluded by the imposed-helix rule. If an entry is needed it should be a
-sub-lytic concentration regime of a binding-characterised helix, labelled below-threshold, rather
-than a distinct peptide. It does not enter the concordance in any case: the `labels.csv` for the
-go/no-go uses only `inactive`, `selective` and `lytic`.
+Two classes for target-only damage. The go/no-go asks whether the damage observable separates
+peptides that disrupt the bacterial target from those that do not, so the six verified peptides
+(four selective and two lytic) are all **active** against the target, and the three scrambles are
+**inactive**. The selective-versus-lytic distinction was a host property (both are active on
+bacteria; they differ in what they do to a mammalian membrane), so it does not enter a target-only
+validation, and the binding-without-lysing class, which also needed the host, is out of scope. The
+`labels.csv` for the go/no-go therefore carries `active` and `inactive`; the finer selective,
+lytic and scramble origins are kept in `seq.txt` and this table for the record.
 
 ### How many ranks and threads
 
@@ -1153,30 +1249,36 @@ campaign runs, which on a shared workstation is not optional.
 
 ```bash
 python calibrate.py calibration_run --objective damage --labels labels.csv
-python calibrate.py calibration_run --objective binding --labels labels.csv
 ```
 
-`labels.csv` has a header and two columns, `sequence,class`, where class is one of `inactive`,
-`selective` or `lytic`:
+`labels.csv` has a header and two columns, `sequence,class`, where class is `active` or
+`inactive`:
 
 ```csv
 sequence,class
-GIGKFLHSAKKFGKAFVGEIMNS,selective
-GIGAVLKVLTTGLPALISWIKRKRQQ,lytic
+GIGKFLHSAKKFGKAFVGEIMNS,active
+ALLGKASMAKKGAAGAIVIKA,inactive
 ```
 
-The script reports a pairwise concordance against those labels and states the reading. This is
-the decision point for the whole approach: if the observable does not order peptides whose
-behaviour is already known, no optimiser setting downstream recovers a signal that is not there.
+With three replicas per peptide the observable is aggregated by sequence (mean over replicas)
+before scoring, and the between-replica spread is the uncertainty on each peptide. The script
+reports a pairwise concordance against the labels and states the reading. The test is whether the
+damage observable ranks the active peptides above the inactive controls, with the between-replica
+error smaller than the active-to-inactive gap. This is the decision point for the whole approach:
+if the observable does not separate peptides whose behaviour is already known, no optimiser setting
+downstream recovers a signal that is not there, so a no-go sends you back to the observable or the
+sampling, not on to a campaign.
 
 ### Step 4: run a campaign
 
-Set `STATE = 0` in `run.py`, `WRITE_XTC = False` in `user/usersettings.py`, and pick the
-objective:
+Set `STATE = 0` in `run.py` and choose the trajectory-retention policy in `user/usersettings.py`
+(see [Data retention](#data-retention)): `run.py` refuses `WRITE_XTC = True` under `STATE = 0`, so
+either leave it `False` to keep only observables and logs, or implement a top-N or downsampled
+retention if you need trajectories. The objective is damage:
 
 ```python
 # user/usersettings.py
-OBJECTIVE = "damage"      # or "binding"
+OBJECTIVE = "damage"      # binding is archived with the host; see Scope
 ```
 
 A campaign runs for days, so it must survive a dropped SSH session. Use `tmux`, which lets you
@@ -1237,23 +1339,21 @@ separates them. A real motif shows entropy falling at the positions that matter 
 stay high; premature convergence pulls every position down together. The script says which it
 sees.
 
-Re-score a finished campaign under the other objective without running anything:
-
-```bash
-python calibrate.py campaign_damage --objective binding
-```
-
-This works because `compute_observables` writes every observable from each pair of production
-runs, and the two objectives are pure functions of that file. Comparing the two rankings on one
-dataset is a post-processing step, not a second campaign.
+Re-scoring a finished run without re-simulating is still possible, because `compute_observables`
+writes every observable and the objectives are pure functions of that file. In target-only mode
+that means re-scoring the damage objective with a different setting, or against a different
+observable, as a post-processing step. Re-scoring under the binding objective needs the host that
+was archived, so it is not available until a host is restored (see
+[Scope](#scope-why-this-is-target-only-damage)).
 
 ### Resource planning
 
-Per candidate, one or two production runs of 400 ns each on the roughly 8 x 8 x 9 nm
-coarse-grained system described under [The membrane system](#the-membrane-system). The wall time
-depends on the build and on whether a GPU is available, so it is measured rather than estimated:
-run a single sequence through `STATE = 1` and time it, or read it off the membrane
-equilibration, which is the same ensemble.
+Per candidate, one production run per replica on the one target membrane, on the roughly
+8 x 8 x 9 nm coarse-grained system described under [The membrane system](#the-membrane-system).
+The validation uses three replicas per peptide; a GA campaign uses one run per candidate (the GA's
+own rerun averaging covers the elites). The wall time depends on the build and on whether a GPU is
+available, so it is measured rather than estimated: run a single sequence through `STATE = 1` and
+time it, or read it off the membrane equilibration, which is the same ensemble.
 
 ```bash
 printf 'GIGKFLHSAKKFGKAFVGEIMNS\n' > seq.txt   # in the repository root, where run.py reads it
@@ -1265,21 +1365,24 @@ time mpirun -np 1 python -m mpi4py run.py --output_dir timing_test
 Production runs at 0.03 ps and should be close to 1.5 times faster per nanosecond, since the
 per-step cost is nearly constant. Taking the measured figure as a conservative floor:
 
-| per candidate | production | wall time, 10 cores |
+| per run | production | wall time, 10 cores |
 |---|---|---|
-| 1 membrane (bacterial target only) | 400 ns | about 2.2 h |
-| 2 membranes (target and host) | 800 ns | about 4.4 h |
+| target membrane, one replica | 400 ns | about 2.2 h |
+| target membrane, one replica | 200 ns | about 1.1 h |
+| validation per peptide (3 replicas) | 3 x 200 ns | about 3.3 h |
 
 Scaled to a campaign, with the 20 cores saturated by running candidates in parallel (a floor of
 about 8700 ns/day aggregate):
 
-| campaign | evaluations (about pop x iter) | membranes x ns | wall time |
+All runs are on the one target membrane; the only lever left is the production length per
+candidate.
+
+| campaign | evaluations (about pop x iter) | production ns | wall time |
 |---|---|---|---|
-| published scale, 144 x 100 | 14 400 | 2 x 400 | about 3.6 years |
-| published scale, 1 membrane | 14 400 | 1 x 400 | about 1.8 years |
-| learning scale, 32 x 20 | 640 | 1 x 200 | about 15 days |
-| learning scale, 24 x 10 | 240 | 1 x 200 | about 5.5 days |
-| learning scale, 24 x 10 | 240 | 1 x 100 | about 2.8 days |
+| published scale, 144 x 100 | 14 400 | 400 | about 1.8 years |
+| learning scale, 32 x 20 | 640 | 200 | about 15 days |
+| learning scale, 24 x 10 | 240 | 200 | about 5.5 days |
+| learning scale, 24 x 10 | 240 | 100 | about 2.8 days |
 
 The reading is blunt: a discovery-scale campaign is cluster territory, not a single workstation.
 What fits here is a **learning-scale campaign**, population 24 to 32 over 10 to 20 iterations, one
@@ -1288,7 +1391,7 @@ two weeks. That is the right first run in any case: it is enough to watch the ge
 converge or collapse, to calibrate the objective window, and to iterate on the algorithm itself
 before committing machine-months to a full search. The two levers, in order of impact, are
 parallel candidate evaluation with `mpi4py` across the 20 cores, and cutting the per-candidate
-cost (one membrane instead of two, shorter production for the learning phase).
+cost by shortening the production for the learning phase.
 
 Measure the real aggregate rate before sizing a campaign: run two and then four candidates at
 once, with 10 and 5 cores each, and compare the summed ns/day. For a system this small, more
@@ -1572,6 +1675,12 @@ The run writes the raw records (one `observables.json` per candidate, one row pe
 the progress file). Turning those into figures is a separate, three-step workflow that never
 re-runs a simulation to redraw a plot. Each step is one script under `tools/`.
 
+The dataset schema and figure catalog below still carry the dual-membrane columns and the
+selectivity figures from the original design. In target-only mode there is no host, so the host
+and selectivity columns (`host_damage`, `selectivity`, and the host amino-acid and
+damage-versus-selectivity figures) are empty or omitted; the target columns (`damage` and the
+per-target observables) are the ones that carry data.
+
 ### 1. Aggregate the campaign into a saved dataset
 
 ```bash
@@ -1803,7 +1912,7 @@ proxy for the cooperative regime. Vestigial two-peptide support exists upstream
 cost and with a different interpretation of gamma.
 
 **Threshold.** Generating leaflet strain is necessary for rupture, not sufficient, and nothing
-in either objective knows where the rupture threshold lies. Establishing it requires long
+in the objective knows where the rupture threshold lies. Establishing it requires long
 unbiased runs or biased sampling on the top candidates, outside the loop.
 
 **Electrostatics.** The inherited settings are `epsilon_r = 15` with reaction-field
@@ -1826,7 +1935,15 @@ constant-tension barostat the area would respond instead and gamma would be pinn
 reference value; the damage observable would vanish. Do not change `Pcoupltype` without
 replacing the observable.
 
-**Scope.** Neither membrane includes LPS, so "bacterial" means an inner or cytoplasmic
+**No selectivity or toxicity.** This is a target-only damage study: it optimises disruption of
+the bacterial membrane and models no host. A single damage objective rewards potency, which tends
+toward hydrophobic, strongly lytic, and therefore often haemolytic peptides, and nothing here
+opposes that except the hydrophobic-fraction cap. Host selectivity and toxicity must be assessed
+downstream (a haemolysis or toxicity predictor, or experiment) and are future work requiring a
+validated cholesterol-containing host. The reasoning is in
+[Scope](#scope-why-this-is-target-only-damage).
+
+**Scope.** The membrane does not include LPS, so "bacterial" means an inner or cytoplasmic
 membrane. Any claim about Gram-negative potency has to account for the outer membrane
 separately. Nothing here models the cell wall, efflux, proteolysis or serum binding.
 
@@ -1930,7 +2047,7 @@ again produced usable-looking numbers:
 - The orientation factor was evaluated at the mean insertion depth instead of averaged over
   frames, giving the maximum weight to trajectories that were never at the interface.
 - The orientation factor scaled a detached candidate to 0.0, which outranks every attached
-  candidate with a negative raw score. Both are described under [The two objectives](#the-two-objectives).
+  candidate with a negative raw score. Both are described under [The objective: membrane damage](#the-objective-membrane-damage).
 - `role="probe"` membranes are documented as ignored by the objectives and entered the
   orientation minimum anyway, so adding one probe at a low orientation rescaled every fitness in
   the campaign, which looks exactly like the peptides having got worse.

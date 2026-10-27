@@ -26,8 +26,8 @@ name_output_production              = "production"
 
 # Simulation #
 timeout_generate_peptide_MDRUN      = 60*2 # In seconds
-timeout_Production_relax_MDRUN      = 60*2 # In seconds
-timeout_Production_MDRUN            = 60*60*2 # In seconds
+timeout_Production_relax_MDRUN      = 600 # In seconds (10 min; relax is short, generous under load)
+timeout_Production_MDRUN            = 60*60*4 # In seconds (4 h; ~1.2 h/200 ns at 4 threads, margin for contention)
 
 # Basefile #
 path_basedir_generate_peptide       = System.get_file_dir(__file__) + "/base/generate_peptide/"
@@ -120,6 +120,20 @@ neutralize                          = True
 # disk numbers in hand before switching STATE and keeping this True.
 WRITE_XTC                           = True
 
+# Number of independent replicas per sequence in the fixed-sequence (STATE=1) validation run.
+# run.py expands each sequence into this many replicas (dirs <SEQ>_rep1.._repN). Replicas differ
+# by initial peptide orientation (a roll about the helix axis, set in the insertion module) and
+# by the random velocity seed, so they are independent starting points. Single-replica 200 ns
+# was dominated by per-trajectory noise; three replicas give a mean and a between-replica error.
+# This governs the validation only; a STATE=0 GA campaign decides its own replica count.
+N_REPLICAS                          = 3
+
+# Keep the entire working directory (every intermediate trajectory: minimisation, relax,
+# equilibration, production, plus structures and logs) next to each candidate's output on
+# success, not only on failure. True for the validation, where all data is kept on disk for
+# inspection and reproducibility. Disk-heavy over a campaign; revisit with WRITE_XTC for STATE=0.
+RETAIN_ALL_TRAJECTORIES             = True
+
 # Miscellaneous
 FILE_WRITE_DEBUGGING                = False
 
@@ -141,7 +155,7 @@ if pdb_gen == "Modeller":
 
 # fitness
 SIM_dt                    = 0.03 # ps
-SIM_time                  = 400000 # ps
+SIM_time                  = 200000 # ps  (200 ns per replica, class-validation)
 
 # Fraction of the trajectory discarded before averaging. The original value (0.95) keeps
 # only the last 5 percent, i.e. 20 ns out of 400 ns. That is a short window for a quantity as

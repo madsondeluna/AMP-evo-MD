@@ -41,13 +41,16 @@ from user.modules.compute_fitness import score_observables
 # The expected fitness order of the classes depends on the objective, and getting this wrong
 # produces a confident, wrong go/no-go verdict on a working configuration.
 #
-# damage  maximises strain on the target membrane, so a lytic peptide should outrank a selective
-#         one, which should outrank an inactive one.
-# binding maximises affinity for the target MINUS affinity for the host. A non-selective lytic
-#         peptide binds the host strongly and is penalised for it, so it belongs between the
-#         inactive and the selective peptides, not above both.
+# damage  (target-only pivot) maximises strain on the bacterial target membrane. The study is
+#         scoped to target disruption, not selectivity, so the test is two-class: the active
+#         peptides (selective and lytic, both membrane-active on the target) should outrank the
+#         inactive controls. selective and lytic share rank 1, so pairs between them are not
+#         scored (the objective makes no selective-versus-lytic claim without a host).
+# binding archived with the host (see the README Scope section); kept for re-scoring only. It
+#         maximises target affinity minus host affinity, so a non-selective lytic peptide sits
+#         between inactive and selective.
 CLASS_ORDER_BY_OBJECTIVE = {
-    "damage":  {"inactive": 0, "selective": 1, "lytic": 2},
+    "damage":  {"inactive": 0, "selective": 1, "lytic": 1},
     "binding": {"inactive": 0, "lytic": 1, "selective": 2},
 }
 CLASS_NAMES = ("inactive", "selective", "lytic")
@@ -132,6 +135,47 @@ def load_labels(path):
     return labels
 
 
+def aggregate_replicas(rows):
+    """
+    Collapse per-replica rows to one row per sequence: mean fitness over the replicas, with the
+    between-replica standard deviation as the honest uncertainty.
+
+    A single trajectory is not a reproducible estimate of the observable (the class-validation
+    showed near-identical peptides giving very different single-replica values), so the go/no-go
+    ranks the per-sequence mean, not individual replicas. A sequence present once (no replicas,
+    or a GA candidate) aggregates to itself with std 0, so this is safe for every caller.
+    """
+    import math
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["sequence"].upper(), []).append(r)
+    aggregated = []
+    for _seq_upper, group in groups.items():
+        n = len(group)
+        fitnesses = [g["fitness"] for g in group]
+        raws = [g["components"].get("raw", g["fitness"]) for g in group]
+        orients = [g["components"].get("orientation_factor", 1.0) for g in group]
+        mean_fit = sum(fitnesses) / float(n)
+        if n > 1:
+            std_fit = math.sqrt(sum((f - mean_fit) ** 2 for f in fitnesses) / float(n - 1))
+        else:
+            std_fit = 0.0
+        first = group[0]
+        aggregated.append({
+            "sequence": first["sequence"],
+            "fitness": mean_fit,
+            "fitness_std": std_fit,
+            "n_rep": n,
+            "components": {
+                "raw": sum(raws) / float(n),
+                "orientation_factor": sum(orients) / float(n),
+            },
+            "class": first["class"],
+            "gmx_version": first["gmx_version"],
+        })
+    return aggregated
+
+
 def concordance(rows, objective):
     """
     Fraction of labelled pairs ordered correctly by fitness, for this objective.
@@ -213,6 +257,10 @@ def main():
     if not rows:
         sys.exit("No scorable observables.json found under %s" % args.results_dir)
 
+    # Collapse replicas (dirs <SEQ>_rep1.._repN) to one row per sequence: mean fitness plus the
+    # between-replica spread. The go/no-go ranks the mean, not single trajectories.
+    rows = aggregate_replicas(rows)
+
     rows.sort(key=lambda r: r["fitness"], reverse=True)
 
     # A set of results produced by more than one GROMACS build is not internally comparable,
@@ -258,14 +306,15 @@ def main():
     print("n         = %d" % len(rows))
     print()
 
-    header = "%-28s %10s %10s %7s  %s" % ("sequence", "fitness", "raw", "orient", "class")
+    header = "%-28s %10s %9s %4s %7s  %s" % ("sequence", "fitness", "+-sd", "n", "orient", "class")
     print(header)
     print("-" * len(header))
     for row in rows:
-        print("%-28s %10.3f %10.3f %7.3f  %s" % (
+        print("%-28s %10.3f %9.3f %4d %7.3f  %s" % (
             row["sequence"][:28],
             row["fitness"],
-            row["components"]["raw"],
+            row.get("fitness_std", 0.0),
+            row.get("n_rep", 1),
             row["components"]["orientation_factor"],
             row["class"] or "",
         ))

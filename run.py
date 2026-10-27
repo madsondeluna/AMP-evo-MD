@@ -207,7 +207,7 @@ def _setup_simulation_directory(sequence, path_parent_dir, dirname=None):
     return sequence_dir
 
 
-def _compute_fitness_simulation(sequence, dirname=None):
+def _compute_fitness_simulation(sequence, dirname=None, replica=1):
     from user.modules.generate_peptide_PB  import module_generate_peptide
     from user.modules.insert_peptide_nmem  import module_insert_peptide_nmem
     from user.modules.production           import module_production_2mem
@@ -223,7 +223,8 @@ def _compute_fitness_simulation(sequence, dirname=None):
 
     while True:
         try:
-            simulation = Sim.Simulation(sequence_dir, sequence=sequence)
+            simulation = Sim.Simulation(sequence_dir, sequence=sequence, replica=replica,
+                                        retain_all=getattr(UserSettings, "RETAIN_ALL_TRAJECTORIES", False))
 
             simulation.add_input_file(os.path.join(sequence_dir, UserSettings.filename_seq))
             simulation.add_input_file(os.path.join(sequence_dir, UserSettings.filename_ssd))
@@ -321,18 +322,27 @@ def _run_specific_sequences(sequences):
         size = comm.Get_size()
         rank = comm.Get_rank()
 
-    buffer = [[] for _ in range(size)]
+    # Each sequence is run N_REPLICAS times as independent replicas. The replicas differ in two
+    # ways: a distinct initial peptide orientation (a roll about the helix axis, set per replica
+    # in the insertion module) and the random velocity seed (gen_seed=-1 in the mdps). This makes
+    # the replicas genuinely independent starting points, not just reseeded copies, which is what
+    # the single-replica validation lacked when near-identical peptides gave very different values.
+    n_replicas = max(1, int(getattr(UserSettings, "N_REPLICAS", 1)))
+    tasks = []
+    for sequence in sequences:
+        for replica in range(1, n_replicas + 1):
+            tasks.append((sequence, replica))
 
-    count = 0
-    while len(sequences) > 0:
-        buffer[count].append(sequences.pop())
-        count += 1
-        if count >= size:
-            count = 0
+    # Round-robin the (sequence, replica) tasks across MPI ranks. The directory name carries the
+    # replica index, so it is unique across ranks without needing the rank in the name.
+    buffer = [[] for _ in range(size)]
+    for i, task in enumerate(tasks):
+        buffer[i % size].append(task)
 
     queue = buffer[rank]
-    for count, sequence in enumerate(queue):
-        _compute_fitness_simulation(sequence, "".join(sequence) + str(rank) + "_" + str(count))
+    for sequence, replica in queue:
+        dirname = "".join(sequence) + "_rep" + str(replica)
+        _compute_fitness_simulation(sequence, dirname, replica=replica)
     print("Done.")
 
 
@@ -440,6 +450,13 @@ if __name__ == "__main__":
                    "candidate. A campaign of thousands of evaluations will fill the disk. Set "
                    "WRITE_XTC = False in user/usersettings.py; the analysis does not need the "
                    "kept copies.")
+            sys.exit(1)
+        if getattr(UserSettings, "RETAIN_ALL_TRAJECTORIES", False):
+            mprint("Refusing to start: RETAIN_ALL_TRAJECTORIES is True, which copies the entire "
+                   "working directory (every intermediate trajectory) for every candidate. That "
+                   "is for the validation, not a campaign of thousands of evaluations, which it "
+                   "would fill the disk with. Set RETAIN_ALL_TRAJECTORIES = False in "
+                   "user/usersettings.py, or decide a campaign retention policy first.")
             sys.exit(1)
         main()
 

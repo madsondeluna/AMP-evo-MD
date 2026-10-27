@@ -92,6 +92,25 @@ def module_insert_peptide_nmem(simulation):
                 path_stderr=path(LocalFiles.stdout_stderr)
             )
 
+            # Per-replica initial orientation. Roll the peptide about its own (now X-aligned)
+            # helix axis by an angle unique to this replica, so independent replicas start with
+            # different faces toward the bilayer rather than the same pose with only a different
+            # velocity seed. rep1 gets 0 (skipped); with N_REPLICAS=3 the rolls are 0, 120, 240.
+            # This is deterministic (reproducible choice of starting poses) and, combined with the
+            # random velocity seed in the mdps, gives genuine replica independence.
+            n_replicas = max(1, int(getattr(UserSettings, "N_REPLICAS", 1)))
+            roll_deg = ((simulation.replica - 1) % n_replicas) * (360.0 / n_replicas)
+            if roll_deg != 0.0:
+                System.run_command(
+                    core.gromacs_commands.GROMACSRunCommands.EDITCONF_rotate(
+                        path(LocalFiles.peptide_GRO_tmp),
+                        path(LocalFiles.peptide_GRO_tmp),
+                        (roll_deg, 0, 0)
+                    ),
+                    path_stdout=path(LocalFiles.stdout_stderr),
+                    path_stderr=path(LocalFiles.stdout_stderr)
+                )
+
             # Starting height above the bilayer midplane. Keyed on the membrane, not on a
             # position in a list: insertion depth is a property of the bilayer thickness.
             translate_vector = (0, 0, -1 * membrane.b_nm)

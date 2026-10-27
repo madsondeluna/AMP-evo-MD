@@ -42,7 +42,8 @@ class Simulation():
                     file_obj.bWrite = False
                     shutil.copyfile(os.path.join(self.dir, file_obj.filename), os.path.join(dst_dir, file_obj.filename))
 
-    def __init__(self, output_dir, sequence=None, keep_on_failure=True):
+    def __init__(self, output_dir, sequence=None, keep_on_failure=True,
+                 replica=1, retain_all=False):
         self._input_data_paths  = []            # List of paths to input files, will be copied to temp dir upon start of run()
         self._output_dir        = output_dir    # To which certain output (specified by the called module) will be copied from the temp_dir
         self._modules           = []            # Contains module objects in the order of execution
@@ -52,6 +53,14 @@ class Simulation():
         self._temp_dir          = None          # In which all simulation input/output will be stored, created/destroyed outside the class
 
         self._sequence          = sequence      # Recorded in the step log, so a log line identifies its candidate
+        # Replica index (1-based). The modules read it to vary the initial peptide orientation
+        # per replica, so independent replicas start from genuinely different states rather than
+        # only different velocity seeds. Default 1 leaves the single-run and GA paths unchanged.
+        self.replica            = replica
+        # retain_all copies the whole working directory next to the output on SUCCESS, not only
+        # on failure, so every intermediate trajectory (minimisation, relax, equilibration,
+        # production) is kept for inspection. Disk-heavy: for validation runs, not the campaign.
+        self._retain_all        = retain_all
         # On failure, copy the temporary directory next to the output rather than letting
         # TemporaryDirectory delete it. Without this the intermediates of a failed candidate are
         # gone by the time anyone looks, and only the concatenated stdout survives, which is the
@@ -104,6 +113,20 @@ class Simulation():
             # Preserving the evidence must never become the reason the run stops.
             return None
 
+    def _retain_temp_dir(self):
+        """Copy the whole working directory into the output on success (retain_all)."""
+        if not self._retain_all or not self._temp_dir:
+            return None
+        destination = os.path.join(self._output_dir, "work")
+        try:
+            if os.path.exists(destination):
+                shutil.rmtree(destination)
+            shutil.copytree(self._temp_dir, destination)
+            return destination
+        except OSError:
+            # Keeping the intermediates must never become the reason the run stops.
+            return None
+
     def run(self):
         with TemporaryDirectory() as self._temp_dir:
             for path in self._input_data_paths:
@@ -130,7 +153,8 @@ class Simulation():
                                     preserved=kept)
                     raise
 
-            self._log.event("finish", status="ok")
+            retained = self._retain_temp_dir()
+            self._log.event("finish", status="ok", retained=retained)
 
     def get_output_variable(self, key):
         try:

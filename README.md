@@ -293,11 +293,16 @@ replica, rather than the two-per-candidate of the original dual-membrane design.
 Because `delta_gamma` from a single 200 ns trajectory was too noisy to rank peptides (the
 class-validation run showed its error comparable to the between-class signal, and two near-identical
 magainin variants gave very different values), the validation runs **three independent replicas**
-per peptide. The per-peptide value is the mean over replicas and the uncertainty is the
-between-replica spread, which is the honest error bar a single trajectory cannot give. Replica
-independence currently comes from the random velocity seed (`gen_seed = -1` in the mdp), since the
-insertion geometry is deterministic; varying the peptide placement and orientation per replica is
-a planned refinement. Keeping trajectories on disk for all replicas is covered under
+per peptide (`N_REPLICAS = 3`, directories `<SEQ>_rep1`, `_rep2`, `_rep3`). The per-peptide value is
+the mean over replicas and the uncertainty is the between-replica spread, which is the honest error
+bar a single trajectory cannot give. The replicas are made genuinely independent, not just reseeded
+copies of one pose: each replica rolls the peptide about its own helix axis by a distinct angle
+before insertion (0, 120 and 240 degrees for three replicas, set in the insertion module via
+`gmx editconf -rotate`), so each starts with a different face toward the bilayer, and on top of that
+the velocity seed is random (`gen_seed = -1` in the mdp). This directly addresses the single-replica
+failure mode, where one trajectory could settle into an unrepresentative orientation and define the
+peptide on its own. `calibrate.py` aggregates by sequence, averaging the replicas before the
+go/no-go. Keeping every replica's trajectories on disk is covered under
 [Data retention](#data-retention).
 
 ### How it compares to the source papers
@@ -1129,15 +1134,26 @@ python run.py --output_dir calibration_run
 ### Data retention
 
 Everything the validation produces is kept on disk, so a run can be inspected and verified at any
-time: the per-candidate `observables.json`, the logs, and (with `WRITE_XTC = True`) every replica's
-production trajectory. For the validation this is a few GB (9 peptides times 3 replicas times one
-200 ns trajectory each), which is cheap against the value of being able to re-examine any run.
+time. Two settings control this, both True for the validation:
 
-A GA campaign is a different scale. Thousands of candidates, each with replicas and a 200 ns
-trajectory, can reach terabytes, which is why `run.py` refuses `WRITE_XTC = True` under `STATE = 0`
-until a retention policy is chosen. The options are keep everything (only if the disk allows it),
-keep the trajectories of the top-N candidates, or keep downsampled trajectories; the observables
-and logs are kept regardless, so a campaign is always reconstructable at the observable level even
+- `WRITE_XTC = True` keeps each replica's production trajectory (copied from the temporary
+  directory into the candidate's output directory).
+- `RETAIN_ALL_TRAJECTORIES = True` keeps the entire working directory of each replica, copied to
+  `<candidate>/work/` on success (not only on failure): every intermediate trajectory
+  (minimisation, relax, NPT equilibration, production), every structure, topology and log. This is
+  the full chain of each replica, for when the production trajectory alone is not enough to see why
+  a peptide behaved as it did.
+
+For the validation this is a few GB (9 peptides times 3 replicas), cheap against the value of being
+able to re-examine any run. The per-candidate `observables.json` and the logs are always kept
+regardless of the two flags.
+
+A GA campaign is a different scale. Thousands of candidates, each with replicas, a 200 ns
+trajectory and a full working directory, can reach terabytes, which is why `run.py` refuses both
+`WRITE_XTC = True` and `RETAIN_ALL_TRAJECTORIES = True` under `STATE = 0` until a retention policy is
+chosen. The options are keep everything (only if the disk allows it), keep the trajectories of the
+top-N candidates, or keep downsampled trajectories; the observables and logs are kept regardless, so
+a campaign is always reconstructable at the observable level even
 when trajectories are pruned. Decide this with the disk numbers in hand before starting a campaign.
 
 ### The calibration set used in this study

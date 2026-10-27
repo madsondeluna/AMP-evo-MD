@@ -84,7 +84,11 @@ _CONSECUTIVE_FAILURES = 0
 # Read relative to this file rather than to the current directory. The campaign is usually
 # launched from a scratch or output directory, and resolving the calibration set against the
 # repository is both what the operator means and what makes the failure reproducible.
-SEQUENCE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seq.txt")
+# Default seq.txt, resolved against the repository. AMP_SEQ_FILE overrides it, which is how a
+# subset (for example only the peptides added to an existing validation_run) is run without
+# editing seq.txt or redoing the peptides already measured.
+SEQUENCE_FILE = os.environ.get("AMP_SEQ_FILE") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "seq.txt")
 
 
 def _read_sequence_file(path):

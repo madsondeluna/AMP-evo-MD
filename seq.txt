@@ -4,10 +4,14 @@
 # "The calibration set used in this study".
 #
 # Selective and lytic sequences were verified against UniProt. The inactive class is designed
-# scrambled controls: minimum Eisenberg hydrophobic-moment permutations of the selective parents
-# (seed 20231023), same composition, amphipathicity destroyed. They are controls, not measured
-# peptides. The "binds without lysing" class is intentionally omitted (no clean alpha-helical
-# example under the imposed-helix model).
+# scrambled controls: one per active peptide (6 active, 6 inactive, composition-matched and
+# balanced). Each scramble is the permutation of its parent that minimises the Eisenberg
+# hydrophobic moment (ideal helix, 100 deg), so composition is preserved and amphipathicity is
+# destroyed; terminal proline is rejected. They are controls, not measured peptides. The first
+# three (scram-magainin2, scram-PGLa, scram-pleurocidin) were generated earlier; the last three
+# (scram-magainin1, scram-melittin, scram-V681) by tools/make_scrambles.py (seed per parent).
+# The "binds without lysing" class is intentionally omitted (no clean alpha-helical example
+# under the imposed-helix model).
 
 # selective  (active on the bacterial target, low hemolysis)
 GIGKFLHSAKKFGKAFVGEIMNS      # magainin 2       UniProt P11006   Zasloff 1987
@@ -20,6 +24,9 @@ GIGAVLKVLTTGLPALISWIKRKRQQ   # melittin         UniProt P01501   Habermann 1972 
 KWKSFLKTFKSAVKTVLHTALKAISS   # V681             Chen et al 2005  (de novo, proline-free)
 
 # inactive  (designed scrambled controls, non-amphipathic, composition matched to the parent)
-ILFKFGAFSGIGSKKGMVHNEAK      # scram-magainin2  (parent magainin 2)
-ALLGKASMAKKGAAGAIVIKA        # scram-PGLa       (parent PGLa)
+ILFKFGAFSGIGSKKGMVHNEAK      # scram-magainin2   (parent magainin 2)
+ALLGKASMAKKGAAGAIVIKA        # scram-PGLa        (parent PGLa)
 TVKKAHGSHGAVYFAHKWKAGLLFG    # scram-pleurocidin (parent pleurocidin)
+IHKKMLFSAEAKVSIGGGFGFGK      # scram-magainin1   (parent magainin 1)
+IVKRRKLVLLGIAIASQWLPGKQGTT   # scram-melittin    (parent melittin, internal Pro, imposed-helix caveat)
+LTLTSAKSKHVTFKVKWAKSLSFAKI   # scram-V681        (parent V681)

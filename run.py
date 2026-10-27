@@ -441,7 +441,11 @@ if __name__ == "__main__":
 
     # 0: genetic algorithm
     # 1: fixed sequence list, no GA (calibration set); see also calibrate.py
-    STATE = 0
+    # Overridable by the AMP_STATE environment variable, so the run mode is a launch-time choice
+    # (AMP_STATE=1 for the validation) rather than an edit to this file. Keeping it out of the
+    # file means the committed default stays 0 (campaign) and a git pull never conflicts on a
+    # locally toggled STATE.
+    STATE = int(os.environ.get("AMP_STATE", "0"))
 
     # WRITE_XTC does not control whether the trajectory is written: production.py always calls
     # MDRUN_XTC, so the .xtc always exists in the simulation's temp directory, which is where the

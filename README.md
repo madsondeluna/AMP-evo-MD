@@ -35,6 +35,7 @@ reasons in [Scope](#scope-why-this-is-target-only-damage) below.
 - [Requirements](#requirements)
 - [Layout](#layout)
 - [References](#references)
+- [Appendix: the first class-validation](#appendix-the-first-class-validation)
 
 ## Scope: why this is target-only damage
 
@@ -44,35 +45,17 @@ from the original dual-objective design, and the reasons are worth stating plain
 shape every result.
 
 The original plan had two membranes: a bacterial target to damage and a mammalian host to spare,
-with selectivity as the second objective. A first class-validation run was built to check that
-the observables separate peptides whose behaviour is already known: 9 peptides (4 selective, 2
-lytic, 3 designed-scramble inactive controls), one replica each, 200 ns on both membranes. The
-observables did not separate the classes. Pairwise concordance with the labels was 0.35 for the
-damage objective and 0.42 for binding, both at or below the 0.5 of a coin toss.
+with selectivity as the second objective. A first class-validation run (nine peptides of known
+activity, one replica each) showed the two-membrane model could not be trusted on two counts: the
+scored damage observable was too noisy at a single replica to rank peptides, and the pure-POPC host
+could not reproduce selectivity at all, because the determinant it is missing is cholesterol and a
+trustworthy cholesterol host was not feasible with the available membrane builder. The full
+diagnosis, with the numbers, is in
+[Appendix: the first class-validation](#appendix-the-first-class-validation) at the end.
 
-The diagnosis had two distinct parts:
-
-- **Active versus inactive could be separated, but not by the scored observable.** Insertion
-  depth, orientation and peptide-lipid interaction energy did distinguish the active peptides
-  (which insert and orient) from the inactive scrambles (which sit peripherally). The scored
-  damage observable, `delta_gamma`, did not: at one replica and 200 ns its error was comparable
-  to the signal, and two near-identical magainin variants gave very different values, which is
-  proof that single-trajectory sampling noise dominated rather than any property of the sequence.
-- **Selective versus lytic could not be separated at all, and this was structural, not
-  statistical.** On the pure-POPC host the selective peptides inserted just as strongly as the
-  lytic ones. The reason is physical: hydrophobic Lennard-Jones insertion (on the order of
-  -600 kJ/mol of peptide-lipid energy) dominates the weak anionic electrostatic preference (on
-  the order of -50 kJ/mol of Coulomb), so an amphipathic helix inserts into any fluid bilayer,
-  POPC or POPE:POPG alike. The molecular determinant of real AMP selectivity is cholesterol
-  (mammalian membranes carry roughly 30 to 40 percent, bacterial membranes none), which rigidifies
-  the host and resists insertion. A pure-POPC host has no such determinant, so it cannot reproduce
-  selectivity. Building a trustworthy cholesterol host in Martini 3 was not straightforward:
-  `insane`, the membrane builder, is a Martini 2 tool whose cholesterol beads do not match the
-  Martini 3 sterol model, so a POPC:CHOL build could not be trusted without separate validation.
-
-Given that, the study was scoped to the target membrane alone. This is the honest and reproducible
-choice: one fully controlled membrane instead of a two-membrane model whose second half was known
-to be wrong. The consequences, stated so they are not discovered later:
+Given that, the study was scoped to the target membrane alone: one fully controlled membrane
+instead of a two-membrane model whose second half was known to be wrong. The consequences of the
+single-objective scope, stated so they are not discovered later:
 
 - A single damage objective optimises **potency, not therapeutic selectivity**. Maximising
   bacterial-membrane disruption tends toward highly hydrophobic, cationic, strongly lytic peptides,
@@ -85,9 +68,10 @@ to be wrong. The consequences, stated so they are not discovered later:
   `user/membranes.py` and the binding objective remains in the code, so selectivity can be restored
   once a trustworthy host exists.
 
-The validation was then redesigned around this scope: a 2-class separation (active against the
-bacterial target versus inactive), three independent replicas per peptide, described in
-[Order of work](#order-of-work) and the running steps below.
+The validation was then redesigned around this scope: a balanced two-class separation (six active
+peptides against the bacterial target versus six composition-matched inactive controls), three
+independent replicas per peptide, described in [Order of work](#order-of-work) and the running
+steps below.
 
 ## What problem this addresses
 
@@ -2261,3 +2245,42 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
    questions shaped several choices here; see "Relation to Evo-MD-FE" above. Their code and files
    are to be released on Zenodo following peer review and were not available when this was
    written.
+
+## Appendix: the first class-validation
+
+This appendix records the class-validation run that motivated the pivot to a target-only, single
+damage objective. It is kept for provenance; the current strategy is in
+[Scope](#scope-why-this-is-target-only-damage) and needs nothing here to be understood.
+
+The original dual-objective design had two membranes: a bacterial target to damage and a mammalian
+host to spare, with selectivity as the second objective. A first class-validation run was built to
+check that the observables separate peptides whose behaviour is already known: 9 peptides (4
+selective, 2 lytic, 3 designed-scramble inactive controls), one replica each, 200 ns on both
+membranes. The observables did not separate the classes. Pairwise concordance with the labels was
+0.35 for the damage objective and 0.42 for binding, both at or below the 0.5 of a coin toss.
+
+The diagnosis had two distinct parts:
+
+- **Active versus inactive could be separated, but not by the scored observable.** Insertion
+  depth, orientation and peptide-lipid interaction energy did distinguish the active peptides
+  (which insert and orient) from the inactive scrambles (which sit peripherally). The scored
+  damage observable, `delta_gamma`, did not: at one replica and 200 ns its error was comparable
+  to the signal, and two near-identical magainin variants gave very different values, which is
+  proof that single-trajectory sampling noise dominated rather than any property of the sequence.
+- **Selective versus lytic could not be separated at all, and this was structural, not
+  statistical.** On the pure-POPC host the selective peptides inserted just as strongly as the
+  lytic ones. The reason is physical: hydrophobic Lennard-Jones insertion (on the order of
+  -600 kJ/mol of peptide-lipid energy) dominates the weak anionic electrostatic preference (on
+  the order of -50 kJ/mol of Coulomb), so an amphipathic helix inserts into any fluid bilayer,
+  POPC or POPE:POPG alike. The molecular determinant of real AMP selectivity is cholesterol
+  (mammalian membranes carry roughly 30 to 40 percent, bacterial membranes none), which rigidifies
+  the host and resists insertion. A pure-POPC host has no such determinant, so it cannot reproduce
+  selectivity. Building a trustworthy cholesterol host in Martini 3 was not straightforward:
+  `insane`, the membrane builder, is a Martini 2 tool whose cholesterol beads do not match the
+  Martini 3 sterol model, so a POPC:CHOL build could not be trusted without separate validation.
+
+The two findings pointed the same way. The damage observable needed more independent sampling to
+rank peptides, and the host membrane could not reproduce selectivity at all with the available
+model. The study was therefore scoped to the target membrane alone, with a single damage objective
+scored over three independent replicas per peptide, and selectivity deferred to future work behind
+a validated cholesterol host.

@@ -1272,6 +1272,49 @@ inactive follows from the loss of amphipathicity, and the go/no-go itself tests 
 delta_gamma places them below the selective and lytic peptides. If any scramble unexpectedly scores
 high, that is itself a finding about the observable.
 
+### Expansion panel (optional, enters incrementally)
+
+To firm up the pairwise concordance beyond the 36 cross-class pairs of the core set, an expansion
+panel in `seq_extra.txt` adds four actives and their four scrambles, taking the set to 10 active and
+10 inactive (100 cross-class pairs). It is run after the core 12 finish, with the same
+`--output_dir`, so nothing is recomputed:
+
+```bash
+AMP_STATE=1 AMP_SEQ_FILE=seq_extra.txt AMP_NP=5 OMP_NUM_THREADS=4 \
+    mpirun -np 5 python -m mpi4py run.py --output_dir validation_run
+```
+
+The four actives were chosen for scaffold diversity and are all alpha-helical and proline-free, so
+unlike melittin they carry no imposed-helix caveat. Sequences verified in this work:
+
+| Name | Sequence (1-letter) | Len | Charge | Class | Source |
+|---|---|---|---|---|---|
+| Aurein 1.2 | GLFDIIKKIAESF (C-amide) | 13 | 0 | selective | Litoria aurea; Rozek et al 2000 |
+| Citropin 1.1 | GLFDVIKKVASVIGGL | 16 | +1 | selective | Litoria citropa; Wegener et al 1999 |
+| Pexiganan (MSI-78) | GIGKFLKKAKKFGKAFVKILKK (C-amide) | 22 | +9 | selective | magainin 2 analogue; Ge et al 1999 |
+| Mastoparan | INLKALAALAKKIL | 14 | +3 | lytic | Vespula lewisii; Hirai et al 1979 |
+
+Scrambles, one per active, generated and verified by `tools/make_scrambles.py` under the same
+criterion as the core controls (seed per parent, lowest Eisenberg hydrophobic moment of 50000
+permutations, terminal proline rejected):
+
+| Name | Sequence (1-letter) | Len | Charge | Parent | Hydrophobic moment (parent -> scramble) |
+|---|---|---|---|---|---|
+| scram-aurein1.2 | KEGKFAILSDIIF | 13 | 0 | aurein 1.2 | 0.667 -> 0.002 |
+| scram-citropin1.1 | FLDGGVGVAIVISLKK | 16 | +1 | citropin 1.1 | 0.507 -> 0.000 |
+| scram-pexiganan | FKGKFKLVGAKKKKIFLIKGAK | 22 | +9 | pexiganan | 0.704 -> 0.001 |
+| scram-mastoparan | ALALNAKLAKIKIL | 14 | +3 | mastoparan | 0.353 -> 0.001 |
+
+Two caveats, stated rather than hidden. First, these actives are shorter than the roughly 24-residue
+campaign length, aurein and mastoparan markedly so; they were chosen for scaffold diversity, not
+length-matching. They are bona fide membrane alpha-helices, so the imposed helix is faithful, but
+length heterogeneity is a potential confounder in the global pairwise concordance, and the cleanest
+contrast stays each active against its own length-matched scramble. Second, pexiganan is a magainin
+2 analogue, so it is not an independent scaffold from the magainins already in the core set; it is
+included as a clinically relevant, strongly cationic (+9) member rather than as fresh chemistry. The
+labels for all eight are already in `labels.csv`, so a go/no-go on the core 12 alone will report them
+as matched nothing until the panel is run.
+
 Two classes for target-only damage, balanced six and six. The go/no-go asks whether the damage
 observable separates peptides that disrupt the bacterial target from those that do not, so the six
 verified peptides (four selective and two lytic) are all **active** against the target, and the six
@@ -2228,6 +2271,7 @@ tools/
 docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
 seq.txt.example              template for the calibration set; copy to seq.txt
+seq_extra.txt                expansion panel for the calibration set (to 10 active / 10 inactive)
 calibrate.py                 score existing results, check against known classes
 tests/                       regression tests, no GROMACS required
 calibration/reference_popc/  the original POPC membranes and reference energies, as provenance

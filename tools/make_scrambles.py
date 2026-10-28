@@ -53,13 +53,23 @@ def scramble(parent, trials=50000):
     return best, best_mu
 
 
-# The three actives whose scrambles were added to balance the set to 6 active / 6 inactive. The
-# first three controls (scram-magainin2, scram-PGLa, scram-pleurocidin) were generated earlier and
-# are kept as recorded in seq.txt.
+# Parents whose scrambles this script generates. The first block balanced the core set to 6 active
+# / 6 inactive (the earlier scram-magainin2, scram-PGLa and scram-pleurocidin are kept as recorded
+# in seq.txt). The second block is the expansion panel (seq_extra.txt): four additional actives,
+# all proline-free and alpha-helical, with one composition-matched scramble each, taking the
+# calibration set to 10 active / 10 inactive. Verified sequences:
+#   aurein 1.2   GLFDIIKKIAESF            selective   Litoria aurea      (C-amidated)
+#   citropin 1.1 GLFDVIKKVASVIGGL         selective   Litoria citropa
+#   pexiganan    GIGKFLKKAKKFGKAFVKILKK   selective   MSI-78, magainin analog (C-amidated)
+#   mastoparan   INLKALAALAKKIL           lytic       Vespula lewisii
 PARENTS = {
-    "scram-magainin1": "GIGKFLHSAGKFGKAFVGEIMKS",
-    "scram-melittin":  "GIGAVLKVLTTGLPALISWIKRKRQQ",
-    "scram-V681":      "KWKSFLKTFKSAVKTVLHTALKAISS",
+    "scram-magainin1":   "GIGKFLHSAGKFGKAFVGEIMKS",
+    "scram-melittin":    "GIGAVLKVLTTGLPALISWIKRKRQQ",
+    "scram-V681":        "KWKSFLKTFKSAVKTVLHTALKAISS",
+    "scram-aurein1.2":   "GLFDIIKKIAESF",
+    "scram-citropin1.1": "GLFDVIKKVASVIGGL",
+    "scram-pexiganan":   "GIGKFLKKAKKFGKAFVKILKK",
+    "scram-mastoparan":  "INLKALAALAKKIL",
 }
 
 

@@ -137,24 +137,46 @@ def load_labels(path):
 
 def aggregate_replicas(rows):
     """
-    Collapse per-replica rows to one row per sequence: mean fitness over the replicas, with the
-    between-replica standard deviation as the honest uncertainty.
+    Collapse per-replica rows to one row per sequence: mean fitness over the VALID replicas, with
+    the between-replica standard deviation as the honest uncertainty.
 
     A single trajectory is not a reproducible estimate of the observable (the class-validation
     showed near-identical peptides giving very different single-replica values), so the go/no-go
     ranks the per-sequence mean, not individual replicas. A sequence present once (no replicas,
     or a GA candidate) aggregates to itself with std 0, so this is safe for every caller.
+
+    Replicas in which the peptide left the interface are EXCLUDED from the mean, not averaged in.
+    The damage objective gives such a replica a large negative penalty (DETACHED_FITNESS) so the
+    GA cannot climb toward detachment; averaging that penalty into a per-sequence score, however,
+    does not estimate the observable, it estimates how often the build failed, and a single
+    detached replica drags a working peptide to about -1000/n. At calibration time the question
+    is whether the VALID measurement separates the classes, so a detached replica carries no
+    measurement and is dropped. The count dropped is reported in main(), and a sequence with no
+    valid replica is kept visible but flagged with n_rep = 0 and scored on its penalty so it
+    sorts to the bottom rather than silently disappearing.
     """
     import math
+    threshold = getattr(UserSettings, "ORIENTATION_reject_below", 0.0)
+
+    def is_detached(r):
+        # "rejected" is set by fitness_damage exactly when the orientation factor is at or below
+        # the threshold; fall back to the factor itself so re-scored or older results also filter.
+        if "rejected" in r["components"]:
+            return True
+        return r["components"].get("orientation_factor", 1.0) <= threshold
+
     groups = {}
     for r in rows:
         groups.setdefault(r["sequence"].upper(), []).append(r)
     aggregated = []
     for _seq_upper, group in groups.items():
-        n = len(group)
-        fitnesses = [g["fitness"] for g in group]
-        raws = [g["components"].get("raw", g["fitness"]) for g in group]
-        orients = [g["components"].get("orientation_factor", 1.0) for g in group]
+        n_total = len(group)
+        valid = [g for g in group if not is_detached(g)]
+        used = valid if valid else group  # no valid replica: keep all so the row stays visible
+        n = len(used)
+        fitnesses = [g["fitness"] for g in used]
+        raws = [g["components"].get("raw", g["fitness"]) for g in used]
+        orients = [g["components"].get("orientation_factor", 1.0) for g in used]
         mean_fit = sum(fitnesses) / float(n)
         if n > 1:
             std_fit = math.sqrt(sum((f - mean_fit) ** 2 for f in fitnesses) / float(n - 1))
@@ -165,7 +187,8 @@ def aggregate_replicas(rows):
             "sequence": first["sequence"],
             "fitness": mean_fit,
             "fitness_std": std_fit,
-            "n_rep": n,
+            "n_rep": len(valid),   # valid replicas actually measuring the observable
+            "n_total": n_total,    # replicas run for this sequence
             "components": {
                 "raw": sum(raws) / float(n),
                 "orientation_factor": sum(orients) / float(n),
@@ -263,6 +286,20 @@ def main():
 
     rows.sort(key=lambda r: r["fitness"], reverse=True)
 
+    # Replicas in which the peptide detached were dropped from each sequence's mean (see
+    # aggregate_replicas). Report it: a sequence scored on fewer replicas, or on none, is a
+    # weaker or absent measurement and the reader must see that next to the ranking.
+    dropped = [(r["sequence"], r["n_total"] - r["n_rep"], r["n_total"])
+               for r in rows if r.get("n_total", 1) - r.get("n_rep", 1) > 0]
+    if dropped:
+        total_dropped = sum(d for _s, d, _t in dropped)
+        print("detached replicas excluded from the means: %d, across %d sequence(s)"
+              % (total_dropped, len(dropped)))
+        for seq, d, t in sorted(dropped, key=lambda x: -x[1])[:10]:
+            flag = "  (no valid replica: shown on penalty)" if d == t else ""
+            print("  %-28s %d of %d dropped%s" % (seq[:28], d, t, flag))
+        print()
+
     # A set of results produced by more than one GROMACS build is not internally comparable,
     # and the shift it introduces looks exactly like a real effect of the sequences.
     builds = {r["gmx_version"] for r in rows if r["gmx_version"]}
@@ -306,15 +343,16 @@ def main():
     print("n         = %d" % len(rows))
     print()
 
-    header = "%-28s %10s %9s %4s %7s  %s" % ("sequence", "fitness", "+-sd", "n", "orient", "class")
+    header = "%-28s %10s %9s %9s %7s  %s" % (
+        "sequence", "fitness", "+-sd", "n val/tot", "orient", "class")
     print(header)
     print("-" * len(header))
     for row in rows:
-        print("%-28s %10.3f %9.3f %4d %7.3f  %s" % (
+        print("%-28s %10.3f %9.3f %9s %7.3f  %s" % (
             row["sequence"][:28],
             row["fitness"],
             row.get("fitness_std", 0.0),
-            row.get("n_rep", 1),
+            "%d/%d" % (row.get("n_rep", 1), row.get("n_total", row.get("n_rep", 1))),
             row["components"]["orientation_factor"],
             row["class"] or "",
         ))

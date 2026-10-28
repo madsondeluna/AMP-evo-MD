@@ -92,20 +92,29 @@ def module_insert_peptide_nmem(simulation):
                 path_stderr=path(LocalFiles.stdout_stderr)
             )
 
-            # Per-replica initial orientation. Roll the peptide about its own (now X-aligned)
-            # helix axis by an angle unique to this replica, so independent replicas start with
-            # different faces toward the bilayer rather than the same pose with only a different
-            # velocity seed. rep1 gets 0 (skipped); with N_REPLICAS=3 the rolls are 0, 120, 240.
-            # This is deterministic (reproducible choice of starting poses) and, combined with the
-            # random velocity seed in the mdps, gives genuine replica independence.
+            # Per-replica initial orientation. Yaw the peptide about the membrane normal (the Z
+            # axis) by an angle unique to this replica, so independent replicas start with a
+            # different in-plane heading, and so contact a different set of lipids, rather than
+            # the same pose with only a different velocity seed. rep1 gets 0 (skipped); with
+            # N_REPLICAS=3 the yaws are 0, 120, 240.
+            #
+            # The rotation is about Z, not the helix long axis (X). A roll about the helix axis
+            # turns the amphipathic hydrophobic face away from the bilayer: in the 2026-10
+            # class-validation the 120 deg roll made the peptide fail to insert in 6 of 9
+            # sequences (it migrated to the opposite leaflet or desorbed, leaving zero valid
+            # orientation frames, which the scorer then penalised as a detached run). A yaw about
+            # the membrane normal keeps the hydrophobic face pointing at the bilayer in every
+            # replica, so it decorrelates the starting pose without destroying insertion.
+            # Deterministic (reproducible), and with the random velocity seed in the mdps it still
+            # gives genuine replica independence.
             n_replicas = max(1, int(getattr(UserSettings, "N_REPLICAS", 1)))
-            roll_deg = ((simulation.replica - 1) % n_replicas) * (360.0 / n_replicas)
-            if roll_deg != 0.0:
+            yaw_deg = ((simulation.replica - 1) % n_replicas) * (360.0 / n_replicas)
+            if yaw_deg != 0.0:
                 System.run_command(
                     core.gromacs_commands.GROMACSRunCommands.EDITCONF_rotate(
                         path(LocalFiles.peptide_GRO_tmp),
                         path(LocalFiles.peptide_GRO_tmp),
-                        (roll_deg, 0, 0)
+                        (0, 0, yaw_deg)
                     ),
                     path_stdout=path(LocalFiles.stdout_stderr),
                     path_stderr=path(LocalFiles.stdout_stderr)

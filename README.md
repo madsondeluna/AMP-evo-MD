@@ -280,13 +280,19 @@ magainin variants gave very different values), the validation runs **three indep
 per peptide (`N_REPLICAS = 3`, directories `<SEQ>_rep1`, `_rep2`, `_rep3`). The per-peptide value is
 the mean over replicas and the uncertainty is the between-replica spread, which is the honest error
 bar a single trajectory cannot give. The replicas are made genuinely independent, not just reseeded
-copies of one pose: each replica rolls the peptide about its own helix axis by a distinct angle
-before insertion (0, 120 and 240 degrees for three replicas, set in the insertion module via
-`gmx editconf -rotate`), so each starts with a different face toward the bilayer, and on top of that
-the velocity seed is random (`gen_seed = -1` in the mdp). This directly addresses the single-replica
-failure mode, where one trajectory could settle into an unrepresentative orientation and define the
-peptide on its own. `calibrate.py` aggregates by sequence, averaging the replicas before the
-go/no-go. Keeping every replica's trajectories on disk is covered under
+copies of one pose: each replica yaws the peptide about the membrane normal (the Z axis) by a
+distinct angle before insertion (0, 120 and 240 degrees for three replicas, set in the insertion
+module via `gmx editconf -rotate`), so each starts with a different in-plane heading and contacts a
+different set of lipids, and on top of that the velocity seed is random (`gen_seed = -1` in the mdp).
+The rotation is about the membrane normal, not the helix long axis: a roll about the helix axis
+turns the amphipathic hydrophobic face away from the bilayer and the peptide then fails to insert
+(in the 2026-10 validation a 120 degree roll lost 6 of 9 sequences to the opposite leaflet), whereas
+a yaw about the normal keeps the face toward the bilayer in every replica. This directly addresses
+the single-replica failure mode, where one trajectory could settle into an unrepresentative
+orientation and define the peptide on its own. `calibrate.py` aggregates by sequence, taking the
+mean over the replicas in which the peptide stayed at the interface and excluding any in which it
+detached (the detached-replica penalty that guards the GA does not estimate the observable), and it
+reports how many replicas it kept. Keeping every replica's trajectories on disk is covered under
 [Data retention](#data-retention).
 
 ### How it compares to the source papers
@@ -1154,6 +1160,23 @@ directories, so the earlier candidates are untouched and `calibrate.py` aggregat
 AMP_SEQ_FILE=seq_extra.txt mpirun -np $AMP_NP python -m mpi4py run.py --output_dir calibration_run
 ```
 
+While the run is going the launch log stays quiet after `Read N sequences`: each task writes its
+GROMACS output to `<output_dir>/<SEQ>_repN/stdout_stderr.log`, not to the launch log, so the launch
+log only prints again when a task finishes. To see which tasks are done and which are still pending,
+`tools/progress.py` prints a per-sequence grid without touching the run:
+
+```bash
+python tools/progress.py calibration_run     # the default output_dir is validation_run
+```
+
+Each `(sequence, replica)` is `done` once it has written `observables.json` (the file `calibrate.py`
+reads), `run` while its directory exists without one, and `wait` before it starts. It is pure
+filesystem inspection, so it is safe to call under `watch`:
+
+```bash
+watch -n 120 "cd ~/AMP-evo-MD && python tools/progress.py calibration_run"
+```
+
 ### Data retention
 
 Everything the validation produces is kept on disk, so a run can be inspected and verified at any
@@ -1307,8 +1330,10 @@ GIGKFLHSAKKFGKAFVGEIMNS,active
 ALLGKASMAKKGAAGAIVIKA,inactive
 ```
 
-With three replicas per peptide the observable is aggregated by sequence (mean over replicas)
-before scoring, and the between-replica spread is the uncertainty on each peptide. The script
+With three replicas per peptide the observable is aggregated by sequence before scoring: the mean
+over the replicas in which the peptide stayed at the interface, excluding any that detached, with
+the between-replica spread as the uncertainty on each peptide. The script prints an `n val/tot`
+column and lists any excluded replicas, so a peptide scored on fewer trajectories stays visible. It
 reports a pairwise concordance against the labels and states the reading. The test is whether the
 damage observable ranks the active peptides above the inactive controls, with the between-replica
 error smaller than the active-to-inactive gap. This is the decision point for the whole approach:
@@ -2197,6 +2222,8 @@ tools/
   mdtools.py                 shared parsing, statistics and plot style
   amp-env.sh.example         environment template; copy to ~/amp-env.sh and edit
   cores.py                   size MPI ranks and threads for this machine
+  make_scrambles.py          regenerate and verify the designed inactive controls
+  progress.py                done/run/wait grid for a STATE = 1 run
   dryrun.py                  the whole pipeline, small, with expected outputs
 docs/pipeline.svg            the diagram at the top of this file
 run.py                       campaign and calibration-set entry points
@@ -2216,6 +2243,7 @@ calibration/reference_popc/  the original POPC membranes and reference energies,
 | Check a membrane is usable | `python tools/membrane_analysis.py single --name X --dir prep/X` |
 | Compare membranes | `python tools/membrane_analysis.py compare --dir prep --names bacterial host` |
 | Measure known peptides | `run.py` with `STATE = 1` |
+| Track a `STATE = 1` run's progress | `python tools/progress.py <dir>` |
 | The go or no-go check | `python calibrate.py <dir> --labels labels.csv` |
 | Run a campaign | `run.py` with `STATE = 0` |
 | Watch a campaign | `python tools/ga_report.py <dir>/output.txt --outdir report` |

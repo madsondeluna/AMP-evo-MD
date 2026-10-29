@@ -14,6 +14,7 @@ Adapted from the Evo-MD run script of van Hilten et al. 2023. Differences from u
 
 import sys
 import os
+import glob
 
 if not sys.version_info[0] == 3:
     sys.exit("Script requires Python 3.")
@@ -327,8 +328,8 @@ def _run_specific_sequences(sequences):
         rank = comm.Get_rank()
 
     # Each sequence is run N_REPLICAS times as independent replicas. The replicas differ in two
-    # ways: a distinct initial peptide orientation (a roll about the helix axis, set per replica
-    # in the insertion module) and the random velocity seed (gen_seed=-1 in the mdps). This makes
+    # ways: a distinct initial peptide orientation (a yaw about the membrane normal, set per
+    # replica in the insertion module) and the random velocity seed (gen_seed=-1 in the mdps). This makes
     # the replicas genuinely independent starting points, not just reseeded copies, which is what
     # the single-replica validation lacked when near-identical peptides gave very different values.
     n_replicas = max(1, int(getattr(UserSettings, "N_REPLICAS", 1)))
@@ -346,6 +347,16 @@ def _run_specific_sequences(sequences):
     queue = buffer[rank]
     for sequence, replica in queue:
         dirname = "".join(sequence) + "_rep" + str(replica)
+        # Resume guard. A task that already wrote observables.json is complete, so skip it:
+        # _setup_simulation_directory empties the task directory on entry, so without this a
+        # re-run after an interruption would wipe and redo every replica instead of finishing
+        # only what is missing. A partial directory (no observables.json) is not skipped and is
+        # rebuilt cleanly. The recursive match covers observables.json in the task directory or
+        # in its retained work/ copy.
+        task_dir = os.path.join(CoreSettings.output_dir, dirname)
+        if glob.glob(os.path.join(task_dir, "**", "observables.json"), recursive=True):
+            mprint("skip %s: already complete (observables.json present)" % dirname)
+            continue
         _compute_fitness_simulation(sequence, dirname, replica=replica)
     print("Done.")
 
